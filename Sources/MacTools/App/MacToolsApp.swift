@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TextExpander.shared.startIfEnabled()
         TaskScheduler.shared.start()
         WindowManager.shared.startTracking()
+        UpdateManager.shared.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -105,6 +106,10 @@ struct MenuBarContent: View {
 
     var body: some View {
         Button("Open MacTools") { show(nil) }
+        Button("Check for Updates…") {
+            show(.updates)
+            UpdateManager.shared.check()
+        }
         Divider()
         Group {
             Button(clicker.running ? "Stop Auto Clicker" : "Start Auto Clicker") { clicker.toggle() }

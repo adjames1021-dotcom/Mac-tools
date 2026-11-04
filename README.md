@@ -1,6 +1,6 @@
 # 🧰 MacTools
 
-One native macOS app with 40+ tools: a keyboard & mouse **macro recorder/player**, an **auto clicker that can also press keys**, an **auto typer**, a **PDF editor**, key presser, text expander, window snapping, clipboard history and lots more. It's written in Swift/SwiftUI, has no dependencies, and is built on your own Mac from this source code.
+One native macOS app with 60 tools: a keyboard & mouse **macro recorder/player**, an **auto clicker that can also press keys**, an **auto typer**, a **PDF editor**, key presser, text expander, window snapping, clipboard history and lots more. It's written in Swift/SwiftUI, has no dependencies, and is built on your own Mac from this source code.
 
 ## Getting started
 
@@ -9,6 +9,12 @@ One native macOS app with 40+ tools: a keyboard & mouse **macro recorder/player*
    - The first time, macOS may say it's from an unidentified developer. **Right-click** the file ▸ **Open** ▸ **Open**. You only need to do this once.
    - If the Swift compiler isn't installed yet, macOS offers to install the free **Command Line Tools**. Click **Install**, wait for it to finish, then double-click the launcher again.
 3. The first build takes a minute or two. After that MacTools opens straight away, and **the Terminal window closes itself** once the app is running.
+
+### Updates are automatic
+
+Once MacTools is installed, you never have to rebuild it by hand. The **Updates** page (and the menu bar's **Check for Updates…**) checks GitHub, downloads the new version, builds it in the background and swaps it in – just click **Restart MacTools**. You can also turn on *Install updates automatically*. Use **Move to Applications Folder** on that page so MacTools lives in Launchpad and Spotlight like any other app.
+
+Builds are signed with a local certificate (“MacTools Local Code Signing”, created in your login keychain on the first build), so macOS **keeps your permissions** across updates. The first time, macOS may ask whether `codesign` can use that key – click **Always Allow**. You can delete the certificate in Keychain Access at any time; builds then fall back to a basic signature.
 
 Prefer the command line?
 
@@ -30,7 +36,7 @@ Automation tools need macOS's permission to control your Mac. MacTools asks when
 | **Input Monitoring** | Macro recording |
 | **Screen Recording** | Screenshots of other apps' windows |
 
-> After MacTools is rebuilt (for example after you update the code), macOS treats it as a new app. `build.sh` clears the old permission entries for you so you get a fresh prompt. If a switch is **on** in System Settings but the tool still doesn't work, click **Reset Permissions…** in *Permissions & Hotkeys*, or remove MacTools from the list with **–** and add it again.
+> Permissions normally survive updates (see above). If a switch is **on** in System Settings but a tool still doesn't work, click **Reset Permissions…** in *Permissions & Hotkeys*, or remove MacTools from the list with **–** and add it again.
 
 ## Global hotkeys (defaults)
 
@@ -81,7 +87,26 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **Mouse & Screen Ruler**: live cursor coordinates (for setting up clicks), display info, and point-to-point distance measuring.
 - **Text to Speech**: every installed voice, speed and pitch, and export to an audio file.
 
-### Text & developer
+### Developer
+- **HTTP / API Client**: send GET/POST/PUT/PATCH/DELETE requests with headers and JSON bodies, see status, timing, headers and pretty-printed responses, keep a history, copy as cURL.
+- **Git Helper**: pick any repository to see its branch, status and recent commits; fetch, pull, push, commit everything, stash, switch or create branches, and open it in Terminal, Finder, VS Code or on the web.
+- **Ports & Web Server**: see which processes are listening on which ports and stop them, check whether a port is free, and serve any folder at `http://localhost` with one click.
+- **Dev Environment**: checks ~30 languages and tools (Git, Swift, Xcode, Python, Node, npm, Go, Rust, Ruby, Docker, Homebrew, gh…) and shows versions, your PATH and environment variables (secrets hidden).
+- **Homebrew Manager**: list installed packages and apps, see what's outdated, search, install, upgrade, uninstall, update, clean up and run doctor. Offers to install Homebrew if you don't have it.
+- **SSH Keys**: list your keys with fingerprints, copy public keys, create new Ed25519/RSA/ECDSA keys, add them to the agent and Keychain, and test your GitHub connection.
+- **JWT Decoder**: decode tokens, show issued/expiry dates and verify HS256/384/512 signatures.
+- **URL Parser**: split a URL into its parts and edit its query parameters.
+- **CSV ⇄ JSON**: convert both ways (quotes, delimiters, type detection) with a table preview.
+- **Cron Helper**: explains cron expressions in plain English and lists the next 10 run times.
+- **Markdown Editor**: live preview, open/save `.md`, export HTML.
+- **Code Snippets**: a searchable library of reusable code with languages.
+- **.gitignore Generator**: combine templates for 17 languages, editors and OSes and save into a project.
+- **Hex Viewer**: byte-by-byte view of any file plus real file-type detection.
+- **Encrypt & Decrypt**: password-protect text or files with AES-256-GCM.
+- **Key Code Viewer**: press keys to see their key codes, characters and modifiers.
+- **Developer Cleaner**: measure and clear Xcode DerivedData, archives, simulator caches, npm/Yarn/pnpm/pip/Gradle/Maven/Go/Cargo/Homebrew caches, and find old `node_modules` folders.
+
+### Text & data
 - **Text Tools**: 40 transformations (all case styles, sort, dedupe, shuffle and number lines, Base64, URL, HTML, ROT13, slugify…), find & replace, word, character and line counts, and lorem ipsum.
 - **JSON Formatter**: pretty-print, minify, sort keys and validate.
 - **Regex Tester**: live highlighting, capture groups, replace preview and a cheat sheet.
@@ -104,6 +129,8 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 
 ### System & network
 - **System Info**: CPU, memory, disk, battery, uptime, load and thermal state.
+- **App Uninstaller**: pick an app and see **everything** it keeps on your Mac – caches, preferences, sandbox containers, saved state, logs, crash reports, cookies, web data, launch agents and helper tools – with sizes. Uninstall the app and the data you've ticked, or **reset** an app by deleting only its data. A **Leftovers** scan finds data from apps you've already deleted. Everything goes to the Trash (so it can be restored), the app is quit first, and system-wide files ask for your password.
+- **Startup Items**: see the background helpers (launch agents and daemons) that start with your Mac, stop them, or remove them.
 - **App & Process Manager**: switch to, hide, quit or force quit apps; list processes by CPU or memory and end them.
 - **System Toggles**: Dark Mode, hidden files, file extensions, desktop icons, Dock auto-hide and delay, Wi-Fi, mute, volume and more. Quick actions include lock, sleep, restart Finder/Dock, empty Trash, eject disks, flush DNS, free memory, log out, restart and shut down.
 - **Network Tools**: public and local IPs, ping, traceroute, DNS lookup, port check, whois, HTTP headers, a speed test, interfaces, connections, routes and LAN devices.
@@ -123,6 +150,7 @@ Macros, snippets, notes, schedules, launcher profiles and clipboard history are 
 ```
 Launch MacTools.command   double-click launcher (builds, opens the app, closes Terminal)
 build.sh                  compiles Sources/ into build/MacTools.app with swiftc
+update.conf               which GitHub repository/branch the in-app updater follows
 Resources/Info.plist      app bundle metadata
 Scripts/make_icon.swift   draws the app icon during the build
 Sources/MacTools/

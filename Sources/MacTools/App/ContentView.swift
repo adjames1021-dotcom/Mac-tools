@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
+    @ObservedObject private var updater = UpdateManager.shared
     @State private var search = ""
 
     private var sections: [(category: ToolCategory, tools: [ToolID])] {
@@ -25,6 +26,7 @@ struct ContentView: View {
                     Section(section.category.rawValue) {
                         ForEach(section.tools) { tool in
                             Label(tool.title, systemImage: tool.icon)
+                                .badge(tool == .updates && (updater.updateAvailable || updater.phase == .ready) ? Text("New") : nil)
                                 .tag(tool)
                         }
                     }
@@ -59,7 +61,7 @@ struct HomeView: View {
                 PermissionBanner(needs: [.accessibility, .inputMonitoring])
             }
             HStack(spacing: 12) {
-                QuickStat(title: "Tools", value: "\(ToolID.allCases.count - 2)", icon: "wrench.and.screwdriver")
+                QuickStat(title: "Tools", value: "\(ToolID.allCases.filter { $0.category != .general }.count)", icon: "wrench.and.screwdriver")
                 QuickStat(title: "Stop everything", value: HotKeyCenter.shared.displayString(for: .stopAll), icon: "stop.circle")
                 QuickStat(title: "Record macro", value: HotKeyCenter.shared.displayString(for: .toggleMacroRecording), icon: "record.circle")
                 QuickStat(title: "Auto clicker", value: HotKeyCenter.shared.displayString(for: .toggleAutoClicker), icon: "cursorarrow.click.2")

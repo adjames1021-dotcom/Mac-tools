@@ -24,10 +24,15 @@ private final class DataBox {
 enum Shell {
     /// Runs an executable synchronously and captures stdout / stderr.
     @discardableResult
-    static func runSync(_ launchPath: String, _ args: [String], input: String? = nil) -> ShellResult {
+    static func runSync(_ launchPath: String, _ args: [String], input: String? = nil,
+                        environment: [String: String]? = nil, directory: URL? = nil) -> ShellResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: launchPath)
         process.arguments = args
+        if let environment = environment {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        }
+        if let directory = directory { process.currentDirectoryURL = directory }
         let outPipe = Pipe()
         let errPipe = Pipe()
         process.standardOutput = outPipe

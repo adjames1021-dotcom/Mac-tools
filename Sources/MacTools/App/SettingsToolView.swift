@@ -77,7 +77,7 @@ struct SettingsToolView: View {
 
             Card(title: "About", icon: "info.circle") {
                 let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-                Text("MacTools \(version) · \(ToolID.allCases.count - 2) tools in one app")
+                Text("MacTools \(version) (\(UpdateManager.shared.build.shortCommit)) · \(ToolID.allCases.filter { $0.category != .general }.count) tools in one app")
                 Text("Built locally from source on this Mac. Closing the window keeps MacTools running in the menu bar; use Quit from the menu bar icon to exit completely.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

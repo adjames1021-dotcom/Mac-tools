@@ -4,7 +4,8 @@ enum ToolCategory: String, CaseIterable, Identifiable, Hashable {
     case general = "General"
     case automation = "Automation"
     case productivity = "Productivity"
-    case text = "Text & Developer"
+    case developer = "Developer"
+    case text = "Text & Data"
     case files = "Files & Media"
     case system = "System"
     case network = "Network"
@@ -15,17 +16,19 @@ enum ToolCategory: String, CaseIterable, Identifiable, Hashable {
 
 enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // General
-    case home, settings
+    case home, settings, updates
     // Automation
     case macroRecorder, autoClicker, autoTyper, keyPresser, textExpander, keepAwake, scheduler, shellRunner, launcher, keyboardLock
     // Productivity
     case clipboard, notes, timers, windowManager, screenshot, colorPicker, mouseInspector, speech
-    // Text & developer
+    // Developer
+    case httpClient, gitHelper, portMonitor, devEnvironment, homebrew, sshKeys, jwtDecoder, urlParser, csvJson, cronHelper, markdownPreview, snippets, gitignoreGen, hexViewer, encryption, keyCodeViewer, devCleaner
+    // Text & data
     case textTools, jsonFormatter, regexTester, diffChecker, passwordGenerator, hashTool, qrCode, randomGenerator
     // Files & media
     case pdfEditor, batchRenamer, imageTools, diskUsage, duplicateFinder
     // System
-    case systemInfo, processManager, systemToggles
+    case systemInfo, processManager, appUninstaller, startupItems, systemToggles
     // Network
     case networkTools
     // Calculators
@@ -35,7 +38,9 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
 
     var category: ToolCategory {
         switch self {
-        case .home, .settings: return .general
+        case .home, .settings, .updates: return .general
+        case .httpClient, .gitHelper, .portMonitor, .devEnvironment, .homebrew, .sshKeys, .jwtDecoder, .urlParser, .csvJson, .cronHelper, .markdownPreview, .snippets, .gitignoreGen, .hexViewer, .encryption, .keyCodeViewer, .devCleaner:
+            return .developer
         case .macroRecorder, .autoClicker, .autoTyper, .keyPresser, .textExpander, .keepAwake, .scheduler, .shellRunner, .launcher, .keyboardLock:
             return .automation
         case .clipboard, .notes, .timers, .windowManager, .screenshot, .colorPicker, .mouseInspector, .speech:
@@ -44,7 +49,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
             return .text
         case .pdfEditor, .batchRenamer, .imageTools, .diskUsage, .duplicateFinder:
             return .files
-        case .systemInfo, .processManager, .systemToggles:
+        case .systemInfo, .processManager, .appUninstaller, .startupItems, .systemToggles:
             return .system
         case .networkTools:
             return .network
@@ -57,6 +62,26 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: return "Home"
         case .settings: return "Permissions & Hotkeys"
+        case .updates: return "Updates"
+        case .httpClient: return "HTTP / API Client"
+        case .gitHelper: return "Git Helper"
+        case .portMonitor: return "Ports & Web Server"
+        case .devEnvironment: return "Dev Environment"
+        case .homebrew: return "Homebrew Manager"
+        case .sshKeys: return "SSH Keys"
+        case .jwtDecoder: return "JWT Decoder"
+        case .urlParser: return "URL Parser"
+        case .csvJson: return "CSV ⇄ JSON"
+        case .cronHelper: return "Cron Helper"
+        case .markdownPreview: return "Markdown Editor"
+        case .snippets: return "Code Snippets"
+        case .gitignoreGen: return ".gitignore Generator"
+        case .hexViewer: return "Hex Viewer"
+        case .encryption: return "Encrypt & Decrypt"
+        case .keyCodeViewer: return "Key Code Viewer"
+        case .devCleaner: return "Developer Cleaner"
+        case .appUninstaller: return "App Uninstaller"
+        case .startupItems: return "Startup Items"
         case .macroRecorder: return "Macro Recorder"
         case .autoClicker: return "Auto Clicker"
         case .autoTyper: return "Auto Typer"
@@ -103,6 +128,26 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: return "square.grid.2x2"
         case .settings: return "lock.shield"
+        case .updates: return "arrow.down.circle"
+        case .httpClient: return "paperplane"
+        case .gitHelper: return "arrow.triangle.branch"
+        case .portMonitor: return "dot.radiowaves.left.and.right"
+        case .devEnvironment: return "hammer"
+        case .homebrew: return "mug"
+        case .sshKeys: return "key.horizontal"
+        case .jwtDecoder: return "person.badge.key"
+        case .urlParser: return "link"
+        case .csvJson: return "tablecells"
+        case .cronHelper: return "calendar.badge.clock"
+        case .markdownPreview: return "doc.plaintext"
+        case .snippets: return "chevron.left.forwardslash.chevron.right"
+        case .gitignoreGen: return "eye.slash"
+        case .hexViewer: return "doc.viewfinder"
+        case .encryption: return "lock.doc"
+        case .keyCodeViewer: return "keyboard.badge.eye"
+        case .devCleaner: return "externaldrive.badge.minus"
+        case .appUninstaller: return "trash.square"
+        case .startupItems: return "power.circle"
         case .macroRecorder: return "record.circle"
         case .autoClicker: return "cursorarrow.click.2"
         case .autoTyper: return "keyboard"
@@ -149,6 +194,26 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: return "Every tool in one place."
         case .settings: return "Grant permissions, customise global hotkeys and app options."
+        case .updates: return "Update MacTools automatically from GitHub – no rebuilding by hand."
+        case .httpClient: return "Send API requests (GET, POST…) with headers and JSON bodies, like Postman."
+        case .gitHelper: return "See status, commit, pull, push, switch branches for any repository."
+        case .portMonitor: return "See what's listening on which port, stop it, or serve a folder locally."
+        case .devEnvironment: return "Which languages and tools are installed, their versions, PATH and env vars."
+        case .homebrew: return "Search, install, upgrade and remove Homebrew packages and apps."
+        case .sshKeys: return "View, create and test SSH keys for GitHub and servers."
+        case .jwtDecoder: return "Decode JSON Web Tokens, check expiry and verify HMAC signatures."
+        case .urlParser: return "Break a URL into parts and edit its query parameters."
+        case .csvJson: return "Convert between CSV and JSON with a table preview."
+        case .cronHelper: return "Understand cron schedules and see their next run times."
+        case .markdownPreview: return "Write Markdown with a live preview and export to HTML."
+        case .snippets: return "Save and search reusable pieces of code."
+        case .gitignoreGen: return "Build a .gitignore for your project's languages and tools."
+        case .hexViewer: return "Look inside any file byte by byte and detect its real type."
+        case .encryption: return "Password-protect text and files with AES-256 encryption."
+        case .keyCodeViewer: return "Press any key to see its key code, characters and modifiers."
+        case .devCleaner: return "Free space taken by Xcode, npm, Homebrew and other caches and node_modules."
+        case .appUninstaller: return "Delete apps along with all their caches, settings and leftover data."
+        case .startupItems: return "See and remove background helpers that start with your Mac."
         case .macroRecorder: return "Record keyboard & mouse actions and replay them with loops and speed control."
         case .autoClicker: return "Click and press keys automatically, with hotkeys, hold-to-click and step sequences."
         case .autoTyper: return "Type text automatically, repeat messages, line-by-line sending."
@@ -195,6 +260,26 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: return AnyView(HomeView())
         case .settings: return AnyView(SettingsToolView())
+        case .updates: return AnyView(UpdatesView())
+        case .httpClient: return AnyView(HTTPClientView())
+        case .gitHelper: return AnyView(GitHelperView())
+        case .portMonitor: return AnyView(PortMonitorView())
+        case .devEnvironment: return AnyView(DevEnvironmentView())
+        case .homebrew: return AnyView(HomebrewView())
+        case .sshKeys: return AnyView(SSHKeysView())
+        case .jwtDecoder: return AnyView(JWTDecoderView())
+        case .urlParser: return AnyView(URLParserView())
+        case .csvJson: return AnyView(CSVJSONView())
+        case .cronHelper: return AnyView(CronHelperView())
+        case .markdownPreview: return AnyView(MarkdownView())
+        case .snippets: return AnyView(SnippetsView())
+        case .gitignoreGen: return AnyView(GitignoreView())
+        case .hexViewer: return AnyView(HexViewerView())
+        case .encryption: return AnyView(EncryptionView())
+        case .keyCodeViewer: return AnyView(KeyCodeViewerView())
+        case .devCleaner: return AnyView(DevCleanerView())
+        case .appUninstaller: return AnyView(AppUninstallerView())
+        case .startupItems: return AnyView(StartupItemsView())
         case .macroRecorder: return AnyView(MacroRecorderView())
         case .autoClicker: return AnyView(AutoClickerView())
         case .autoTyper: return AnyView(AutoTyperView())
