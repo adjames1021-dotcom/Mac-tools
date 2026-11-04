@@ -386,3 +386,41 @@ extension View {
         modifier(FileDropModifier(onDrop: onDrop))
     }
 }
+
+/// A rounded, content-sized button for icon-over-label tiles.
+/// (The standard macOS button has a fixed height, which clips multi-line labels.)
+struct TileButtonStyle: ButtonStyle {
+    var selected: Bool = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        TileBody(configuration: configuration, selected: selected)
+    }
+
+    private struct TileBody: View {
+        let configuration: ButtonStyleConfiguration
+        let selected: Bool
+        @State private var hovering = false
+        @Environment(\.isEnabled) private var isEnabled
+
+        private var fill: Color {
+            if selected { return Color.accentColor.opacity(configuration.isPressed ? 0.75 : 1) }
+            if configuration.isPressed { return Color.primary.opacity(0.18) }
+            return Color.primary.opacity(hovering ? 0.10 : 0.06)
+        }
+
+        var body: some View {
+            configuration.label
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .foregroundColor(selected ? Color.white : Color.primary)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(fill))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.primary.opacity(selected ? 0 : 0.12))
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .opacity(isEnabled ? 1 : 0.45)
+                .onHover { hovering = $0 }
+        }
+    }
+}

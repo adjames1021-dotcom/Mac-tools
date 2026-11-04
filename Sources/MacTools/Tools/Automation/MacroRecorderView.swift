@@ -96,8 +96,8 @@ struct MacroRecorderView: View {
             HStack(spacing: 20) {
                 IntField(title: "Repeat", value: $engine.settings.repeatCount, unit: "times (0 = forever)")
                 NumberField(title: "Pause between loops", value: $engine.settings.loopDelay, unit: "sec")
-                NumberField(title: "Start delay", value: $engine.settings.startDelay, unit: "sec")
             }
+            NumberField(title: "Start delay", value: $engine.settings.startDelay, unit: "sec")
         }
     }
 

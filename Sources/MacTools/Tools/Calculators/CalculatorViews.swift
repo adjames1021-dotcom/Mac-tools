@@ -58,8 +58,7 @@ struct CalculatorView: View {
                                         .font(.system(size: 17, weight: .medium))
                                         .frame(maxWidth: .infinity, minHeight: 34)
                                 }
-                                .buttonStyle(.bordered)
-                                .tint(key == "=" ? Color.accentColor : nil)
+                                .buttonStyle(TileButtonStyle(selected: key == "="))
                             }
                         }
                     }
@@ -251,8 +250,7 @@ struct UnitConverterView: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: 44)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(cat.id == categoryID ? Color.accentColor : nil)
+                    .buttonStyle(TileButtonStyle(selected: cat.id == categoryID))
                 }
             }
 

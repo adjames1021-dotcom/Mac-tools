@@ -185,11 +185,18 @@ struct SystemTogglesView: View {
                             if action.destructive { pending = action } else { action.run(); lastMessage = "\(action.title) ✓" }
                         } label: {
                             VStack(spacing: 6) {
-                                Image(systemName: action.icon).font(.title2)
-                                Text(action.title).font(.caption)
+                                Image(systemName: action.icon)
+                                    .font(.title2)
+                                    .foregroundColor(action.destructive ? Color.red : Color.accentColor)
+                                Text(action.title)
+                                    .font(.caption)
+                                    .multilineTextAlignment(.center)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                            .frame(maxWidth: .infinity, minHeight: 54)
+                            .frame(maxWidth: .infinity, minHeight: 58)
                         }
+                        .buttonStyle(TileButtonStyle())
                     }
                 }
                 if !lastMessage.isEmpty {

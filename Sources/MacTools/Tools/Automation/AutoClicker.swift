@@ -568,7 +568,7 @@ private struct SequenceStepRow: View {
                 ForEach(ClickPoint.Kind.allCases) { Label($0.title, systemImage: $0.icon).tag($0) }
             }
             .labelsHidden()
-            .frame(width: 120)
+            .frame(width: 112)
 
             switch step.wrappedValue.kind {
             case .click:
@@ -595,7 +595,7 @@ private struct SequenceStepRow: View {
             case .wait:
                 EmptyView()
             }
-            NumberField(title: step.wrappedValue.kind == .wait ? "wait" : "then wait", value: step.delayMs, unit: "ms", width: 70)
+            NumberField(title: "wait", value: step.delayMs, unit: "ms", width: 64)
             Spacer()
             Button {
                 if index > 0 { clicker.settings.points.swapAt(index, index - 1) }

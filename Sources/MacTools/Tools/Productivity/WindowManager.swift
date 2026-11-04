@@ -256,10 +256,11 @@ struct WindowManagerView: View {
                                 } label: {
                                     VStack(spacing: 4) {
                                         Image(systemName: action.icon).font(.title2)
-                                        Text(action.title).font(.caption)
+                                        Text(action.title).font(.caption).lineLimit(1)
                                     }
                                     .frame(width: 104, height: 54)
                                 }
+                                .buttonStyle(TileButtonStyle())
                             }
                         }
                     }

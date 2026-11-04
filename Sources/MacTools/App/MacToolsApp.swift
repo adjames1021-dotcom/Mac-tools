@@ -11,7 +11,7 @@ struct MacToolsApp: App {
         WindowGroup("MacTools", id: "main") {
             ContentView()
                 .environmentObject(appState)
-                .frame(minWidth: 980, minHeight: 660)
+                .frame(minWidth: 1080, minHeight: 680)
         }
         .commands {
             CommandGroup(replacing: .newItem) { }

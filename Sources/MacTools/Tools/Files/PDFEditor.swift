@@ -891,7 +891,7 @@ struct PDFEditorView: View {
 
     private var toolBar: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 4) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 4)], alignment: .leading, spacing: 4) {
                 ForEach(PDFTool.allCases) { tool in
                     Button {
                         model.tool = tool
@@ -899,12 +899,11 @@ struct PDFEditorView: View {
                     } label: {
                         VStack(spacing: 2) {
                             Image(systemName: tool.icon)
-                            Text(tool.title).font(.system(size: 10))
+                            Text(tool.title).font(.system(size: 10)).lineLimit(1)
                         }
-                        .frame(width: 62, height: 38)
+                        .frame(maxWidth: .infinity, minHeight: 34)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(model.tool == tool ? Color.accentColor : nil)
+                    .buttonStyle(TileButtonStyle(selected: model.tool == tool))
                 }
             }
             HStack(spacing: 12) {
@@ -973,7 +972,9 @@ struct PDFEditorView: View {
                     Button { model.zoomIn() } label: { Image(systemName: "plus.magnifyingglass") }
                     Button("Fit") { model.zoomToFit() }
                 }
-                Divider().frame(height: 18)
+                Spacer()
+            }
+            HStack(spacing: 6) {
                 Group {
                     Button { model.goToPage(model.pageIndex - 1) } label: { Image(systemName: "chevron.left") }
                         .disabled(model.pageIndex <= 0)

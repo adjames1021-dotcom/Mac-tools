@@ -56,6 +56,7 @@ struct ScreenshotView: View {
                             }
                             .frame(width: 120, height: 70)
                         }
+                        .buttonStyle(TileButtonStyle())
                         .disabled(busy)
                     }
                     Spacer()
