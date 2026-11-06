@@ -22,7 +22,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // Productivity
     case clipboard, notes, timers, windowManager, screenshot, colorPicker, mouseInspector, speech
     // Developer
-    case httpClient, gitHelper, portMonitor, devEnvironment, homebrew, sshKeys, jwtDecoder, urlParser, csvJson, cronHelper, markdownPreview, snippets, gitignoreGen, hexViewer, encryption, keyCodeViewer, devCleaner
+    case httpClient, gitHelper, portMonitor, devEnvironment, homebrew, sshKeys, jwtDecoder, urlParser, csvJson, cronHelper, markdownPreview, snippets, gitignoreGen, hexViewer, chromeExtensionViewer, encryption, keyCodeViewer, devCleaner
     // Text & data
     case textTools, jsonFormatter, regexTester, diffChecker, passwordGenerator, hashTool, qrCode, randomGenerator
     // Files & media
@@ -39,7 +39,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     var category: ToolCategory {
         switch self {
         case .home, .settings, .updates: return .general
-        case .httpClient, .gitHelper, .portMonitor, .devEnvironment, .homebrew, .sshKeys, .jwtDecoder, .urlParser, .csvJson, .cronHelper, .markdownPreview, .snippets, .gitignoreGen, .hexViewer, .encryption, .keyCodeViewer, .devCleaner:
+        case .httpClient, .gitHelper, .portMonitor, .devEnvironment, .homebrew, .sshKeys, .jwtDecoder, .urlParser, .csvJson, .cronHelper, .markdownPreview, .snippets, .gitignoreGen, .hexViewer, .chromeExtensionViewer, .encryption, .keyCodeViewer, .devCleaner:
             return .developer
         case .macroRecorder, .autoClicker, .autoTyper, .keyPresser, .textExpander, .keepAwake, .scheduler, .shellRunner, .launcher, .keyboardLock:
             return .automation
@@ -77,6 +77,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .snippets: return "Code Snippets"
         case .gitignoreGen: return ".gitignore Generator"
         case .hexViewer: return "Hex Viewer"
+        case .chromeExtensionViewer: return "Chrome Extension Viewer"
         case .encryption: return "Encrypt & Decrypt"
         case .keyCodeViewer: return "Key Code Viewer"
         case .devCleaner: return "Developer Cleaner"
@@ -143,6 +144,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .snippets: return "chevron.left.forwardslash.chevron.right"
         case .gitignoreGen: return "eye.slash"
         case .hexViewer: return "doc.viewfinder"
+        case .chromeExtensionViewer: return "puzzlepiece.extension"
         case .encryption: return "lock.doc"
         case .keyCodeViewer: return "keyboard.badge.eye"
         case .devCleaner: return "externaldrive.badge.minus"
@@ -209,6 +211,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .snippets: return "Save and search reusable pieces of code."
         case .gitignoreGen: return "Build a .gitignore for your project's languages and tools."
         case .hexViewer: return "Look inside any file byte by byte and detect its real type."
+        case .chromeExtensionViewer: return "Download any Chrome Web Store extension and read its source code."
         case .encryption: return "Password-protect text and files with AES-256 encryption."
         case .keyCodeViewer: return "Press any key to see its key code, characters and modifiers."
         case .devCleaner: return "Free space taken by Xcode, npm, Homebrew and other caches and node_modules."
@@ -275,6 +278,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .snippets: return AnyView(SnippetsView())
         case .gitignoreGen: return AnyView(GitignoreView())
         case .hexViewer: return AnyView(HexViewerView())
+        case .chromeExtensionViewer: return AnyView(ChromeExtensionViewerView())
         case .encryption: return AnyView(EncryptionView())
         case .keyCodeViewer: return AnyView(KeyCodeViewerView())
         case .devCleaner: return AnyView(DevCleanerView())
