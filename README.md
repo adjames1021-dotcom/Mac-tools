@@ -31,7 +31,9 @@ Requirements: macOS 13 Ventura or newer, plus Xcode or the Command Line Tools (`
 1. Open **School To-Do ▸ Setup**.
 2. Pick **Claude** or **ChatGPT**, then paste an API key from [console.anthropic.com](https://console.anthropic.com/settings/keys) or [platform.openai.com](https://platform.openai.com/api-keys). It's saved in your Mac's keychain.
 3. **Google Classroom**: click **Sign In to Google…** and sign in with your school account. You only do this once. If you use several Google accounts, change the account number until Classroom opens the right one.
-4. **Infinite Campus**: paste the address of your district's Infinite Campus sign-in page, click **Sign In to Infinite Campus…** and sign in. Infinite Campus signs you out when MacTools quits, so turn on **Remember my username and password** to have MacTools sign you back in by itself (not needed if you sign in to Infinite Campus with Google).
+4. **Infinite Campus**: paste any Infinite Campus address – just the site, like `https://yourdistrict.infinitecampus.org`, is enough; MacTools finds your district's sign-in page. Choose how you sign in:
+   - **With Google**: click **Sign In to Infinite Campus…** and pick your school Google account. Infinite Campus signs you out when MacTools quits, so each sync signs you back in through Google by itself.
+   - **With a username and password**: sign in once, and turn on **Remember my username and password** so MacTools can sign you back in by itself.
 5. Click **Sync Now**.
 
 Each sync sends the text of these pages to the AI company you picked and uses your API credit; a sync that finds nothing new is skipped for free. **Setup ▸ Last Data Sent to the AI** shows exactly what was sent. If a page isn't picked up, open it in the sign-in browser and click **Sync This Page Too**.
@@ -92,7 +94,7 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
   - Reads your Classroom To-do pages (assigned, missing, done), each class's **Stream** for announcements that need doing ("test Friday", "bring the permission slip"), and your Infinite Campus assignments, scores and grade categories. No Google Classroom API or school admin setup needed.
   - Work goes into separate **To-Do**, **Missing** and **Done** lists, sorted by **how much it counts toward your grade** (from Infinite Campus category weights and points, or estimated from the kind of work) or by due date.
   - Each item links straight to the assignment when the site has a link, and **what you check off is remembered** across syncs.
-  - **Sign in once**: the built-in browser remembers your Google sign-in, and it can save your Infinite Campus login in the keychain so it signs you back in automatically.
+  - **Sign in once**: the built-in browser remembers your Google sign-in, and Infinite Campus is signed back in automatically – through Google single sign-on, or with a username and password saved in the keychain.
   - A progress bar shows each step. It can also sync automatically, notify you about new work, and copy the list as Markdown.
 - **Clipboard History**: a searchable list with pinning. It skips passwords copied from password managers.
 - **Quick Notes**: a scratchpad that saves automatically, with search and export.

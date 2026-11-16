@@ -238,8 +238,18 @@ enum SchoolSignIn {
             SchoolBrowser.shared.open(SchoolWeb.classroomHome(account: planner.settings.classroomAccount),
                                       message: "Sign in with your school Google account. When your Classroom To-do page shows, click Done.")
         case .campus:
-            SchoolBrowser.shared.open(SchoolWeb.normalizedURL(planner.settings.campusURL),
-                                      message: "Sign in to Infinite Campus. When your portal shows, click Done.")
+            // Look up the district's sign-in page first, so a bare address like https://district.infinitecampus.org works.
+            planner.lookUpCampus { site in
+                let typed = SchoolWeb.normalizedURL(planner.settings.campusURL)
+                if planner.settings.campusSignIn == .google, let sso = site.flatMap({ URL(string: $0.ssoURL) }), sso.host != nil {
+                    SchoolBrowser.shared.open(sso, message: "Pick or sign in to your school Google account. When your Infinite Campus portal shows, click Done.")
+                } else if let login = site.flatMap({ URL(string: $0.loginURL) }) ?? typed {
+                    let google = planner.settings.campusSignIn == .google
+                    SchoolBrowser.shared.open(login, message: google
+                        ? "Click your district's Google sign-in button, sign in with your school account, then click Done."
+                        : "Sign in to Infinite Campus. When your portal shows, click Done.")
+                }
+            }
         case .other:
             SchoolBrowser.shared.open(planner.settings.extraPages.first.flatMap { SchoolWeb.normalizedURL($0) },
                                       message: "Sign in to the page, then click Done.")
@@ -527,41 +537,83 @@ struct SchoolSetupView: View {
     private var campusCard: some View {
         Card(title: "Infinite Campus", icon: "building.columns") {
             Toggle("Read my Infinite Campus assignments and grade categories", isOn: $planner.settings.campusEnabled)
-            TextField("https://yourdistrict.infinitecampus.org/campus/portal/students/yourdistrict.jsp", text: $planner.settings.campusURL)
-                .textFieldStyle(.roundedBorder)
-            Text("Paste the address of the page where you sign in to Infinite Campus.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack {
+                TextField("https://yourdistrict.infinitecampus.org", text: $planner.settings.campusURL)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { planner.lookUpCampus(force: true) }
+                Button("Check") { planner.lookUpCampus(force: true) }
+                    .disabled(SchoolWeb.normalizedURL(planner.settings.campusURL) == nil || planner.campusLookup == .looking)
+            }
+            campusStatus
+            Picker("Sign in", selection: $planner.settings.campusSignIn) {
+                ForEach(CampusSignIn.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.radioGroup)
             HStack {
                 Button("Sign In to Infinite Campus…") { SchoolSignIn.open(.campus) }
                     .disabled(SchoolWeb.normalizedURL(planner.settings.campusURL) == nil)
                 Spacer()
             }
-            Toggle("Remember my username and password, and sign me in automatically", isOn: $planner.settings.rememberCampusLogin)
-            if planner.settings.rememberCampusLogin {
-                HStack {
-                    TextField("Username", text: $campusUser)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 180)
-                    SecureField("Password", text: $campusPassword)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 180)
-                    Button("Save Login") {
-                        if planner.setCampusLogin(username: campusUser, password: campusPassword) {
-                            campusPassword = ""
-                            campusMessage = "Saved in your Mac's keychain."
-                        } else {
-                            campusMessage = "The keychain refused to save the login."
-                        }
-                    }
-                    .disabled(campusUser.trimmed.isEmpty || campusPassword.isEmpty)
-                }
-                Text("Only typed into \(campusHost), and only when it asks you to sign in. Not needed if you sign in to Infinite Campus with Google.")
+            switch planner.settings.campusSignIn {
+            case .google:
+                Text("Sign in once with your school Google account. Infinite Campus signs you out whenever MacTools quits, so each sync quietly signs you back in through Google – no typing needed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            case .password:
+                Toggle("Remember my username and password, and sign me in automatically", isOn: $planner.settings.rememberCampusLogin)
+                if planner.settings.rememberCampusLogin {
+                    HStack {
+                        TextField("Username", text: $campusUser)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 180)
+                        SecureField("Password", text: $campusPassword)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 180)
+                        Button("Save Login") {
+                            if planner.setCampusLogin(username: campusUser, password: campusPassword) {
+                                campusPassword = ""
+                                campusMessage = "Saved in your Mac's keychain."
+                            } else {
+                                campusMessage = "The keychain refused to save the login."
+                            }
+                        }
+                        .disabled(campusUser.trimmed.isEmpty || campusPassword.isEmpty)
+                    }
+                    Text("Only typed into \(campusHost), and only when it asks you to sign in.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             if !campusMessage.isEmpty {
                 Text(campusMessage).font(.caption).foregroundColor(.green)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var campusStatus: some View {
+        switch planner.campusLookup {
+        case .looking:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Finding your district's sign-in page…")
+            }
+            .font(.caption)
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundColor(.orange)
+        case .idle:
+            if let site = planner.campusSite {
+                Label("Found \(site.appName): \(site.loginURL)" + (site.ssoURL.isEmpty ? " (no Google sign-in on this page)" : " · Google sign-in available"),
+                      systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundColor(.green)
+                    .lineLimit(2)
+            } else {
+                Text("Paste any Infinite Campus address – just the site (like https://yourdistrict.infinitecampus.org) is enough.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

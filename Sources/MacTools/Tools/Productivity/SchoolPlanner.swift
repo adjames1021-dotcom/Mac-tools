@@ -283,12 +283,28 @@ enum SchoolModels {
     ]
 }
 
+enum CampusSignIn: String, Codable, CaseIterable, Identifiable {
+    case google, password
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .google: return "With Google (school account)"
+        case .password: return "With a username and password"
+        }
+    }
+}
+
 struct SchoolSettings: Codable, Equatable {
     var classroomEnabled = true
     var classroomStreams = true
     var classroomAccount = 0
     var campusEnabled = false
     var campusURL = ""
+    var campusSignIn = CampusSignIn.google
+    /// The district's sign-in page and Google sign-in link, looked up from `campusURL`.
+    var campusSite: CampusSite?
     var rememberCampusLogin = false
     var provider = AIProvider.claude
     var claudeModel = SchoolModels.claudeDefault
@@ -316,6 +332,8 @@ struct SchoolSettings: Codable, Equatable {
         classroomAccount = try c.decodeIfPresent(Int.self, forKey: .classroomAccount) ?? d.classroomAccount
         campusEnabled = try c.decodeIfPresent(Bool.self, forKey: .campusEnabled) ?? d.campusEnabled
         campusURL = try c.decodeIfPresent(String.self, forKey: .campusURL) ?? d.campusURL
+        campusSignIn = (try? c.decodeIfPresent(CampusSignIn.self, forKey: .campusSignIn)) ?? d.campusSignIn
+        campusSite = try? c.decodeIfPresent(CampusSite.self, forKey: .campusSite)
         rememberCampusLogin = try c.decodeIfPresent(Bool.self, forKey: .rememberCampusLogin) ?? d.rememberCampusLogin
         provider = (try? c.decodeIfPresent(AIProvider.self, forKey: .provider)) ?? d.provider
         claudeModel = try c.decodeIfPresent(String.self, forKey: .claudeModel) ?? d.claudeModel
@@ -394,6 +412,13 @@ final class SchoolPlanner: ObservableObject {
     /// The exact text sent to the AI last time (shown under Setup for troubleshooting).
     @Published private(set) var lastPayload = ""
     @Published private(set) var keyStatus: [AIProvider: Bool] = [:]
+    @Published private(set) var campusLookup: CampusLookup = .idle
+
+    enum CampusLookup: Equatable {
+        case idle
+        case looking
+        case failed(String)
+    }
 
     var isSyncing: Bool {
         if case .working = phase { return true }
@@ -468,6 +493,44 @@ final class SchoolPlanner: ObservableObject {
               let user = Keychain.string(Self.campusUserAccount), !user.isEmpty,
               let password = Keychain.string(Self.campusPasswordAccount), !password.isEmpty else { return nil }
         return (user, password)
+    }
+
+    // MARK: Infinite Campus address
+
+    /// The looked-up sign-in details, if they belong to the address currently entered.
+    var campusSite: CampusSite? {
+        guard let site = settings.campusSite, site.input == settings.campusURL.trimmed else { return nil }
+        return site
+    }
+
+    /// Works out the district's sign-in page and Google sign-in link from whatever Infinite Campus address was entered.
+    func lookUpCampus(force: Bool = false, completion: ((CampusSite?) -> Void)? = nil) {
+        if !force, let site = campusSite {
+            completion?(site)
+            return
+        }
+        let input = settings.campusURL.trimmed
+        guard !input.isEmpty else {
+            completion?(nil)
+            return
+        }
+        campusLookup = .looking
+        CampusResolver.resolve(input) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let site):
+                if self.settings.campusURL.trimmed == input {
+                    self.settings.campusSite = site
+                    // No Google sign-in on this district's page: it must be a username and password.
+                    if site.ssoURL.isEmpty && self.settings.campusSignIn == .google { self.settings.campusSignIn = .password }
+                }
+                self.campusLookup = .idle
+                completion?(site)
+            case .failure(let error):
+                self.campusLookup = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                completion?(nil)
+            }
+        }
     }
 
     // MARK: Lists
@@ -659,7 +722,24 @@ final class SchoolPlanner: ObservableObject {
         phase = .working("Opening your school sites…")
         progress = 0
         setProgress(0.01, stepEnd: 0.02)
-        let settingsNow = settings
+        if settings.campusEnabled && !settings.campusURL.trimmed.isEmpty && campusSite == nil {
+            phase = .working("Finding your Infinite Campus sign-in page…")
+            lookUpCampus { [weak self] site in
+                guard let self = self, self.isSyncing else { return }
+                if site == nil, case .failed(let message) = self.campusLookup {
+                    preWarnings.append("Infinite Campus: \(message)")
+                }
+                self.startScraping(key: key, force: force, automatic: automatic, warnings: preWarnings)
+            }
+            return
+        }
+        startScraping(key: key, force: force, automatic: automatic, warnings: preWarnings)
+    }
+
+    private func startScraping(key: String, force: Bool, automatic: Bool, warnings: [String]) {
+        let jobs = makeJobs()
+        var settingsNow = settings
+        settingsNow.campusSite = campusSite   // only if it was looked up for the address entered now
         SchoolScraper.shared.run(
             jobs: jobs,
             settings: settingsNow,
@@ -667,7 +747,7 @@ final class SchoolPlanner: ObservableObject {
             progress: { [weak self] text, done, total in self?.scrapeProgress(text, done: done, total: total) },
             completion: { [weak self] report in
                 var report = report
-                report.warnings.insert(contentsOf: preWarnings, at: 0)
+                report.warnings.insert(contentsOf: warnings, at: 0)
                 self?.scrapeFinished(report, key: key, settings: settingsNow, force: force, automatic: automatic)
             }
         )
@@ -692,7 +772,10 @@ final class SchoolPlanner: ObservableObject {
                 jobs.append(ScrapeJob(kind: .classroomClasses, source: .classroom, label: "Your classes", url: url))
             }
         }
-        if settings.campusEnabled, let url = SchoolWeb.normalizedURL(settings.campusURL) {
+        // Start on the site's (blank) landing page: it's on the right site for reading data, and unlike the
+        // sign-in page it doesn't disturb a session that's still signed in.
+        if settings.campusEnabled,
+           let url = campusSite.flatMap({ URL(string: $0.origin + "/") }) ?? SchoolWeb.normalizedURL(settings.campusURL) {
             jobs.append(ScrapeJob(kind: .campus, source: .campus, label: "Assignments and grade categories", url: url))
         }
         let campusHost = SchoolWeb.normalizedURL(settings.campusURL)?.host

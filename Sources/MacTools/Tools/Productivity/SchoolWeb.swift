@@ -86,6 +86,115 @@ enum SchoolWeb {
     }
 }
 
+// MARK: - Infinite Campus address lookup
+
+/// Where a district's Infinite Campus sign-in lives, worked out from whatever Infinite Campus address was pasted
+/// (the bare site, the sign-in page, the Google sign-in link, a portal page…).
+struct CampusSite: Codable, Equatable {
+    /// The address this was worked out from (re-checked when the address changes).
+    var input: String
+    /// e.g. https://district.infinitecampus.org
+    var origin: String
+    /// The district's app name, e.g. "msad35".
+    var appName: String
+    /// The student sign-in page.
+    var loginURL: String
+    /// The district's "Google Single Sign-On" link, or "" when it has none.
+    var ssoURL: String
+}
+
+enum CampusResolver {
+    private static let stateCodes: Set<String> = [
+        "al", "ak", "az", "ar", "ca", "co", "ct", "de", "dc", "fl", "ga", "hi", "id", "il", "in", "ia", "ks", "ky", "la",
+        "me", "md", "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or",
+        "pa", "ri", "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy",
+    ]
+
+    /// First capture group of `pattern` in `text`.
+    static func capture(_ pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[range])
+    }
+
+    /// Likely app names, best guess first: one named in the address itself, then the first part of the host name
+    /// without its state code (hosted districts look like "<appname><state>.infinitecampus.org").
+    static func appNameCandidates(for url: URL) -> [String] {
+        var names: [String] = []
+        if let name = capture(#"/campus/portal/(?:students|parents)/([^/.]+)\.jsp"#, in: url.path) { names.append(name) }
+        if let name = capture(#"/campus/SSO/([^/]+)"#, in: url.path) { names.append(name) }
+        if let name = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name.lowercased() == "appname" })?.value { names.append(name) }
+        if let label = url.host?.split(separator: ".").first.map({ String($0).lowercased() }) {
+            if label.count > 3, stateCodes.contains(String(label.suffix(2))) { names.append(String(label.dropLast(2))) }
+            names.append(label)
+        }
+        var seen = Set<String>()
+        return names.filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+    }
+
+    /// Finds the student sign-in page (and Google sign-in link) for any Infinite Campus address.
+    static func resolve(_ text: String, completion: @escaping (Result<CampusSite, Error>) -> Void) {
+        guard let url = SchoolWeb.normalizedURL(text), let host = url.host, let scheme = url.scheme else {
+            completion(.failure(ScrapeIssue("That doesn't look like a web address.")))
+            return
+        }
+        let origin = "\(scheme)://\(host)"
+        attempt(origin: origin, input: text.trimmed, names: appNameCandidates(for: url), completion: completion)
+    }
+
+    private static func attempt(origin: String, input: String, names: [String], completion: @escaping (Result<CampusSite, Error>) -> Void) {
+        guard let name = names.first else {
+            completion(.failure(ScrapeIssue("Couldn't find your district's sign-in page from that address. Paste the address of the Infinite Campus page where you sign in.")))
+            return
+        }
+        let rest = Array(names.dropFirst())
+        let login = "\(origin)/campus/portal/students/\(name).jsp"
+        guard let loginURL = URL(string: login) else {
+            self.attempt(origin: origin, input: input, names: rest, completion: completion)
+            return
+        }
+        var request = URLRequest(url: loginURL, timeoutInterval: 20)
+        request.setValue(SchoolWeb.userAgent, forHTTPHeaderField: "User-Agent")
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let html = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
+            DispatchQueue.main.async {
+                guard status == 200, html.range(of: "name=\"appName\"", options: .caseInsensitive) != nil else {
+                    CampusResolver.attempt(origin: origin, input: input, names: rest, completion: completion)
+                    return
+                }
+                let appName = CampusResolver.capture(#"name="appName"\s+value="([^"]+)""#, in: html) ?? name
+                completion(.success(CampusSite(input: input, origin: origin, appName: appName, loginURL: login,
+                                               ssoURL: CampusResolver.ssoLink(in: html, base: "\(origin)/campus/") ?? "")))
+            }
+        }.resume()
+    }
+
+    /// The "Google Single Sign-On" link on a sign-in page (or the first single-sign-on option, if there are several).
+    static func ssoLink(in html: String, base: String) -> String? {
+        let decoded = { (href: String) in href.replacingOccurrences(of: "&amp;", with: "&") }
+        var found: [(href: String, label: String)] = []
+        if let href = capture(#"id="samlLoginLink"[^>]*href="([^"]+)""#, in: html)
+            ?? capture(#"href="([^"]+)"[^>]*id="samlLoginLink""#, in: html) {
+            found.append((decoded(href), "link"))
+        }
+        if let regex = try? NSRegularExpression(pattern: #"<option[^>]*value="([^"]*SSO/[^"]*)"[^>]*>([^<]*)"#, options: [.caseInsensitive]) {
+            for match in regex.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
+                guard let href = Range(match.range(at: 1), in: html), let label = Range(match.range(at: 2), in: html) else { continue }
+                found.append((decoded(String(html[href])), String(html[label])))
+            }
+        }
+        if found.isEmpty, let href = capture(#"href="([^"]*/campus/SSO/[^"]*)""#, in: html) {
+            found.append((decoded(href), "link"))
+        }
+        let pick = found.first(where: { $0.label.localizedCaseInsensitiveContains("google") }) ?? found.first
+        guard let href = pick?.href, let url = URL(string: href, relativeTo: URL(string: base)) else { return nil }
+        return url.absoluteURL.absoluteString
+    }
+}
+
 // MARK: - Scraper
 
 /// Loads school pages in a hidden browser window (signed in with your saved cookies) and reads them.
@@ -113,6 +222,7 @@ final class SchoolScraper: NSObject {
         let pageText: String
         let hasPassword: Bool
         let submittedLogin: Bool
+        let ssoLinks: [String]
     }
 
     private enum Outcome {
@@ -207,7 +317,7 @@ final class SchoolScraper: NSObject {
             case .classroom: self.readClassroom(job, maxChars: 80_000, scrollRounds: 12, completion: completion)
             case .classroomStream: self.readClassroom(job, maxChars: 25_000, scrollRounds: 3, completion: completion)
             case .classroomClasses: self.readClasses(job, completion: completion)
-            case .campus: self.readCampus(job, allowLogin: true, completion: completion)
+            case .campus: self.readCampus(job, step: .first, completion: completion)
             case .page: self.readPage(job, completion: completion)
             }
         }
@@ -283,8 +393,14 @@ final class SchoolScraper: NSObject {
         }
     }
 
-    private func readCampus(_ job: ScrapeJob, allowLogin: Bool, completion: @escaping (Outcome) -> Void) {
+    private enum CampusStep { case first, onSignInPage, afterSignIn }
+
+    /// Reads Infinite Campus. If it has signed you out, signs back in – with Google (single sign-on, using the Google
+    /// sign-in the browser remembers) or with the saved username and password – then reads again.
+    private func readCampus(_ job: ScrapeJob, step: CampusStep, completion: @escaping (Outcome) -> Void) {
         let expectedHost = job.url.host ?? ""
+        let site = settings.campusSite
+        let usesGoogle = settings.campusSignIn == .google
         var args: [String: Any] = [
             "lookbackDays": max(1, settings.doneLookbackDays),
             "expectedHost": expectedHost,
@@ -292,8 +408,7 @@ final class SchoolScraper: NSObject {
             "password": "",
             "tryLogin": false,
         ]
-        let hadCredentials = credentials != nil
-        if allowLogin, let credentials = credentials {
+        if !usesGoogle, step != .afterSignIn, let credentials = credentials {
             args["username"] = credentials.user
             args["password"] = credentials.password
             args["tryLogin"] = true
@@ -303,21 +418,52 @@ final class SchoolScraper: NSObject {
             switch result {
             case .failure(let error):
                 completion(.failed(error.localizedDescription))
+                return
             case .success(let campus):
                 if campus.loggedIn {
-                    completion(.page(Self.campusPage(campus, job: job)))
-                } else if campus.submittedLogin {
+                    completion(.page(Self.campusPage(campus, job: job, link: site?.loginURL ?? job.url.absoluteString)))
+                    return
+                }
+                if step == .afterSignIn {
+                    completion(.signIn(usesGoogle
+                        ? "Google sign-in didn't get you into Infinite Campus. Click Sign In… and sign in with your school Google account."
+                        : "Infinite Campus didn't accept the saved username and password. Sign in again, or update them under Setup."))
+                    return
+                }
+                if campus.submittedLogin {
                     // We filled in the saved username and password; wait for the portal to load, then read again.
                     self.progress?("Signing in to Infinite Campus…", self.index - 1, self.jobs.count)
                     self.waitForNavigation(timeout: 20) { [weak self] in
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                            self?.readCampus(job, allowLogin: false, completion: completion)
+                            self?.readCampus(job, step: .afterSignIn, completion: completion)
                         }
                     }
+                    return
+                }
+                if usesGoogle, let sso = URL(string: site?.ssoURL ?? "").flatMap({ $0.host == nil ? nil : $0 })
+                    ?? campus.ssoLinks.compactMap({ URL(string: $0) }).first {
+                    self.progress?("Signing in to Infinite Campus with Google…", self.index - 1, self.jobs.count)
+                    self.followSignIn(sso, returningTo: expectedHost) { [weak self] landed in
+                        if landed {
+                            self?.readCampus(job, step: .afterSignIn, completion: completion)
+                        } else {
+                            completion(.signIn("Infinite Campus signs in through Google, and Google needs you to sign in or pick your school account. Click Sign In…, then sync again."))
+                        }
+                    }
+                    return
+                }
+                if !usesGoogle, step == .first, self.credentials != nil, let login = URL(string: site?.loginURL ?? ""),
+                   login.host != nil, !campus.hasPassword {
+                    // Signed out and not on the sign-in page: open it so the saved login can be filled in.
+                    self.load(login) { [weak self] in
+                        self?.readCampus(job, step: .onSignInPage, completion: completion)
+                    }
+                    return
+                }
+                if usesGoogle {
+                    completion(.signIn("Couldn't find the Google sign-in link for your Infinite Campus. Click Sign In… and sign in there."))
                 } else if campus.host != expectedHost {
                     completion(.signIn("Infinite Campus needs you to sign in (it opened \(campus.host.isEmpty ? "another page" : campus.host))."))
-                } else if !allowLogin && hadCredentials {
-                    completion(.signIn("Infinite Campus didn't accept the saved username and password. Sign in again, or update them under Setup."))
                 } else {
                     completion(.signIn("Infinite Campus needs you to sign in."))
                 }
@@ -325,7 +471,42 @@ final class SchoolScraper: NSObject {
         }
     }
 
-    private static func campusPage(_ campus: CampusResult, job: ScrapeJob) -> ScrapedPage {
+    /// Opens a single-sign-on link and waits for the hand-offs (Infinite Campus → Google → back) to finish.
+    /// Calls back with true once the browser is back on `host`, or false if it stopped somewhere else
+    /// (for example Google asking you to sign in or pick an account).
+    private func followSignIn(_ url: URL, returningTo host: String, then: @escaping (Bool) -> Void) {
+        let token = runToken
+        let deadline = Date().addingTimeInterval(40)
+        load(url) { [weak self] in
+            self?.waitForSignIn(host: host, deadline: deadline, token: token, lastURL: "", stillSince: Date(), then: then)
+        }
+    }
+
+    private func waitForSignIn(host: String, deadline: Date, token: Int, lastURL: String, stillSince: Date,
+                               then: @escaping (Bool) -> Void) {
+        guard token == runToken, let webView = webView else { return }
+        let url = webView.url
+        let current = url?.absoluteString ?? ""
+        if !webView.isLoading, url?.host == host, url?.path.contains("/SSO/") == false {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self = self, token == self.runToken else { return }
+                then(true)
+            }
+            return
+        }
+        let now = Date()
+        let still = (webView.isLoading || current != lastURL) ? now : stillSince
+        // Sitting on the same page elsewhere for a while means it's waiting for you.
+        if now > deadline || now.timeIntervalSince(still) > 6 {
+            then(false)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.waitForSignIn(host: host, deadline: deadline, token: token, lastURL: current, stillSince: still, then: then)
+        }
+    }
+
+    private static func campusPage(_ campus: CampusResult, job: ScrapeJob, link: String) -> ScrapedPage {
         var text = ""
         if campus.apiWorked {
             if campus.students.count > 1 { text += "STUDENTS: " + campus.students.joined(separator: ", ") + "\n" }
@@ -338,7 +519,7 @@ final class SchoolScraper: NSObject {
             text += "(Infinite Campus's assignment list wasn't available, so this is the text of the page instead.)\n" + campus.pageText
         }
         let limit = 120_000
-        return ScrapedPage(source: job.source, label: job.label, url: job.url.absoluteString,
+        return ScrapedPage(source: job.source, label: job.label, url: link,
                            text: String(text.prefix(limit)), links: [], truncated: text.count > limit)
     }
 
@@ -734,7 +915,7 @@ enum SchoolJS {
     /// Arguments: lookbackDays, expectedHost, username, password, tryLogin.
     static let readCampus = shared + #"""
     const out = { url: location.href, host: location.host, loggedIn: false, apiWorked: false, lines: [], categories: [],
-                  students: [], pageText: '', hasPassword: false, submittedLogin: false };
+                  students: [], pageText: '', hasPassword: false, submittedLogin: false, ssoLinks: [] };
     const getJSON = async (path) => {
       try {
         const response = await fetch(path, { credentials: 'include', headers: { 'Accept': 'application/json' } });
@@ -847,6 +1028,7 @@ enum SchoolJS {
         out.submittedLogin = true;
       }
     }
+    out.ssoLinks = Array.from(document.querySelectorAll('a[href*="/SSO/"]')).map((a) => a.href).slice(0, 5);
     out.pageText = tidy(textOf(document, 0)).slice(0, 60000);
     return JSON.stringify(out);
     """#
