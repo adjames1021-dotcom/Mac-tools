@@ -138,15 +138,16 @@ struct SchoolPlannerView: View {
     @ViewBuilder
     private func list(_ status: SchoolStatus) -> some View {
         let items = planner.items(status)
-        if status != .done {
-            HStack {
+        if status != .done && !items.isEmpty {
+            HStack(spacing: 8) {
+                Text("In each class:").font(.callout).foregroundStyle(.secondary)
                 Picker("", selection: $planner.settings.sortByWeight) {
-                    Text("Biggest grade impact first").tag(true)
-                    Text("Soonest due first").tag(false)
+                    Text("Counts most first").tag(true)
+                    Text("Due soonest first").tag(false)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 380)
+                .frame(maxWidth: 300)
                 Spacer()
             }
         }
@@ -156,14 +157,14 @@ struct SchoolPlannerView: View {
             ForEach(sections(items, status)) { section in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(section.title).font(.headline)
+                        Label(section.title, systemImage: "book.closed").font(.title3.bold())
                         if !section.subtitle.isEmpty {
                             Text(section.subtitle).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text("\(section.items.count)").font(.caption).foregroundStyle(.secondary)
+                        Text("\(section.items.count)").font(.callout).foregroundStyle(.secondary)
                     }
-                    .padding(.top, 4)
+                    .padding(.top, 8)
                     ForEach(section.items) { item in
                         SchoolItemRow(item: item, status: status)
                     }
@@ -172,22 +173,22 @@ struct SchoolPlannerView: View {
         }
     }
 
+    /// One section per class, classes in alphabetical order. Items keep the list's order inside each class.
     private func sections(_ items: [SchoolItem], _ status: SchoolStatus) -> [ListSection] {
-        if status == .done {
-            return [ListSection(id: "done", title: "Done in the last \(planner.settings.doneLookbackDays) days",
-                                subtitle: "Turned in, graded or checked off by you", items: items)]
-        }
-        if planner.settings.sortByWeight {
-            return GradeImpact.allCases.compactMap { impact in
-                let group = items.filter { $0.impact == impact }
-                return group.isEmpty ? nil : ListSection(id: impact.rawValue, title: impact.title, subtitle: impact.explanation, items: group)
+        let byClass = Dictionary(grouping: items) { $0.course.trimmed.isEmpty ? "Other" : $0.course.trimmed }
+        return byClass.keys
+            .sorted { a, b in
+                if (a == "Other") != (b == "Other") { return b == "Other" }   // "Other" goes last
+                return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
             }
-        }
-        let now = Date()
-        return DueGroup.allCases.compactMap { due in
-            let group = items.filter { DueGroup.of($0.dueDate, now: now) == due }
-            return group.isEmpty ? nil : ListSection(id: "due\(due.rawValue)", title: due.title, subtitle: "", items: group)
-        }
+            .map { (course: String) -> ListSection in
+                let group = byClass[course] ?? []
+                var subtitle = ""
+                if status == .todo, let next = group.compactMap(\.dueDate).min() {
+                    subtitle = "next " + SchoolDates.describe(next: next).lowercased()
+                }
+                return ListSection(id: "class:\(course)", title: course, subtitle: subtitle, items: group)
+            }
     }
 
     @ViewBuilder
@@ -214,18 +215,6 @@ struct SchoolPlannerView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
-    }
-}
-
-extension GradeImpact {
-    var explanation: String {
-        switch self {
-        case .major: return "Tests, big projects and the most heavily weighted categories"
-        case .high: return "Essays, projects and high-point work"
-        case .medium: return "Quizzes, labs and mid-weight work"
-        case .low: return "Homework, classwork and readings"
-        case .minimal: return "Practice and completion-only work"
-        }
     }
 }
 
@@ -309,7 +298,6 @@ struct SchoolItemRow: View {
                         .strikethrough(status == .done)
                 }
                 HStack(spacing: 12) {
-                    Label(item.course.isEmpty ? "No class" : item.course, systemImage: "book.closed")
                     Label(SchoolDates.describe(item), systemImage: "calendar")
                         .foregroundColor(dueColor)
                     if !item.points.isEmpty {

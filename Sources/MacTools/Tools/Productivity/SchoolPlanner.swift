@@ -189,38 +189,20 @@ enum SchoolDates {
         return (days < 0 ? "Was due " : "Due ") + shortDate.string(from: date) + at
     }
 
+    /// "Due tomorrow", "Due Friday"… for a bare date (used in class headers).
+    static func describe(next date: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return "Due today" }
+        if cal.isDateInTomorrow(date) { return "Due tomorrow" }
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: cal.startOfDay(for: date)).day ?? 0
+        if days > 1 && days < 7 { return "Due " + weekday.string(from: date) }
+        return "Due " + shortDate.string(from: date)
+    }
+
     static func relative(_ date: Date) -> String {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .full
         return f.localizedString(for: date, relativeTo: Date())
-    }
-}
-
-/// Due-date buckets used when the list is sorted by date.
-enum DueGroup: Int, CaseIterable, Identifiable {
-    case overdue, today, tomorrow, thisWeek, later, noDate
-
-    var id: Int { rawValue }
-
-    var title: String {
-        switch self {
-        case .overdue: return "Past Due"
-        case .today: return "Due Today"
-        case .tomorrow: return "Due Tomorrow"
-        case .thisWeek: return "This Week"
-        case .later: return "Later"
-        case .noDate: return "No Due Date"
-        }
-    }
-
-    static func of(_ date: Date?, now: Date = Date()) -> DueGroup {
-        guard let date = date else { return .noDate }
-        let cal = Calendar.current
-        if date < now && !cal.isDateInToday(date) { return .overdue }
-        if cal.isDateInToday(date) { return .today }
-        if cal.isDateInTomorrow(date) { return .tomorrow }
-        let days = cal.dateComponents([.day], from: cal.startOfDay(for: now), to: cal.startOfDay(for: date)).day ?? 0
-        return days < 7 ? .thisWeek : .later
     }
 }
 
@@ -600,12 +582,16 @@ final class SchoolPlanner: ObservableObject {
             let list = items(status)
             guard !list.isEmpty else { continue }
             out += "## \(status.title)\n"
-            for item in list {
-                let box = status == .done ? "[x]" : "[ ]"
-                let title = item.link.map { "[\(item.title)](\($0.absoluteString))" } ?? item.title
-                var details = [item.course, SchoolDates.describe(item)]
-                if !item.weight.isEmpty { details.append(item.weight) }
-                out += "- \(box) \(title) – \(details.joined(separator: " · "))\n"
+            let byClass = Dictionary(grouping: list) { $0.course.trimmed.isEmpty ? "Other" : $0.course.trimmed }
+            for course in byClass.keys.sorted(by: { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }) {
+                out += "\n### \(course)\n"
+                for item in byClass[course] ?? [] {
+                    let box = status == .done ? "[x]" : "[ ]"
+                    let title = item.link.map { "[\(item.title)](\($0.absoluteString))" } ?? item.title
+                    var details = [SchoolDates.describe(item)]
+                    if !item.weight.isEmpty { details.append(item.weight) }
+                    out += "- \(box) \(title) – \(details.joined(separator: " · "))\n"
+                }
             }
             out += "\n"
         }

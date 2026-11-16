@@ -92,7 +92,7 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 ### Productivity
 - **School To-Do**: one to-do list built from **Google Classroom** and **Infinite Campus**, organized by AI (**Claude** or **ChatGPT**, your choice).
   - Reads your Classroom To-do pages (assigned, missing, done), each class's **Stream** for announcements that need doing ("test Friday", "bring the permission slip"), and your Infinite Campus assignments, scores and grade categories. No Google Classroom API or school admin setup needed.
-  - Work goes into separate **To-Do**, **Missing** and **Done** lists, sorted by **how much it counts toward your grade** (from Infinite Campus category weights and points, or estimated from the kind of work) or by due date.
+  - Work goes into separate **To-Do**, **Missing** and **Done** lists, **grouped by class**. Inside each class, the work that **counts most toward your grade** comes first (from Infinite Campus category weights and points, or estimated from the kind of work), or switch to soonest due first.
   - Each item links straight to the assignment when the site has a link, and **what you check off is remembered** across syncs.
   - **Sign in once**: the built-in browser remembers your Google sign-in, and Infinite Campus is signed back in automatically – through Google single sign-on, or with a username and password saved in the keychain.
   - A progress bar shows each step. It can also sync automatically, notify you about new work, and copy the list as Markdown.
