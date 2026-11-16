@@ -20,7 +20,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // Automation
     case macroRecorder, autoClicker, autoTyper, keyPresser, textExpander, keepAwake, scheduler, shellRunner, launcher, keyboardLock
     // Productivity
-    case clipboard, notes, timers, windowManager, screenshot, colorPicker, mouseInspector, speech
+    case schoolPlanner, clipboard, notes, timers, windowManager, screenshot, colorPicker, mouseInspector, speech
     // Developer
     case httpClient, gitHelper, portMonitor, devEnvironment, homebrew, sshKeys, jwtDecoder, urlParser, csvJson, cronHelper, markdownPreview, snippets, gitignoreGen, hexViewer, chromeExtensionViewer, encryption, keyCodeViewer, devCleaner
     // Text & data
@@ -43,7 +43,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
             return .developer
         case .macroRecorder, .autoClicker, .autoTyper, .keyPresser, .textExpander, .keepAwake, .scheduler, .shellRunner, .launcher, .keyboardLock:
             return .automation
-        case .clipboard, .notes, .timers, .windowManager, .screenshot, .colorPicker, .mouseInspector, .speech:
+        case .schoolPlanner, .clipboard, .notes, .timers, .windowManager, .screenshot, .colorPicker, .mouseInspector, .speech:
             return .productivity
         case .textTools, .jsonFormatter, .regexTester, .diffChecker, .passwordGenerator, .hashTool, .qrCode, .randomGenerator:
             return .text
@@ -93,6 +93,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .shellRunner: return "Command Runner"
         case .launcher: return "Workspace Launcher"
         case .keyboardLock: return "Keyboard Cleaner"
+        case .schoolPlanner: return "School To-Do"
         case .clipboard: return "Clipboard History"
         case .notes: return "Quick Notes"
         case .timers: return "Timers & Pomodoro"
@@ -160,6 +161,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .shellRunner: return "terminal"
         case .launcher: return "square.stack.3d.up"
         case .keyboardLock: return "lock"
+        case .schoolPlanner: return "graduationcap"
         case .clipboard: return "doc.on.clipboard"
         case .notes: return "note.text"
         case .timers: return "timer"
@@ -227,6 +229,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .shellRunner: return "Run shell commands and AppleScripts, save favourites."
         case .launcher: return "Open a whole set of apps, files and websites in one click."
         case .keyboardLock: return "Temporarily lock the keyboard so you can clean it."
+        case .schoolPlanner: return "Google Classroom + Infinite Campus in one to-do list, sorted by grade impact by AI."
         case .clipboard: return "Keep a searchable history of everything you copy."
         case .notes: return "A scratchpad for quick notes that saves automatically."
         case .timers: return "Stopwatch, countdown timer and Pomodoro focus timer."
@@ -294,6 +297,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .shellRunner: return AnyView(ShellRunnerView())
         case .launcher: return AnyView(LauncherView())
         case .keyboardLock: return AnyView(KeyboardLockView())
+        case .schoolPlanner: return AnyView(SchoolPlannerView())
         case .clipboard: return AnyView(ClipboardView())
         case .notes: return AnyView(NotesView())
         case .timers: return AnyView(TimersView())

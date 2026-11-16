@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TaskScheduler.shared.start()
         WindowManager.shared.startTracking()
         UpdateManager.shared.start()
+        SchoolPlanner.shared.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
