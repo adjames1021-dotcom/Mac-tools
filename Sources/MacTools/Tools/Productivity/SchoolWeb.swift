@@ -414,9 +414,9 @@ final class SchoolScraper: NSObject {
             "quarterStart": "",
             "quarterEnd": "",
         ]
-        if settings.onlyThisQuarter, settings.quarterManual, let start = settings.quarterStart, let end = settings.quarterEnd {
-            args["quarterStart"] = SchoolDates.dayString(start)
-            args["quarterEnd"] = SchoolDates.dayString(end)
+        if settings.onlyThisQuarter, settings.quarterSource == .schedule, let quarter = settings.scheduledQuarter() {
+            args["quarterStart"] = SchoolDates.dayString(quarter.start)
+            args["quarterEnd"] = SchoolDates.dayString(quarter.end)
         }
         if !usesGoogle, step != .afterSignIn, let credentials = credentials {
             args["username"] = credentials.user
@@ -1044,7 +1044,7 @@ enum SchoolJS {
           // Only this quarter: your own dates if given, otherwise the grading period found above.
           let range = null;
           if (onlyThisQuarter && quarterStart && quarterEnd) {
-            range = { start: Date.parse(quarterStart), end: Date.parse(quarterEnd) + DAY };
+            range = { start: Date.parse(quarterStart), end: Date.parse(quarterEnd) + 15 * DAY };
           } else if (onlyThisQuarter && found) {
             // Plus two weeks after the quarter, for work that's already been handed out.
             range = { start: found.start, end: found.end + 15 * DAY };

@@ -706,14 +706,6 @@ struct SchoolSetupView: View {
             keyText = ""
             keyMessage = ""
         }
-        .onChange(of: planner.settings.quarterManual) { on in
-            // Start from the dates Infinite Campus reported (or the next ten weeks).
-            guard on else { return }
-            if planner.settings.quarterStart == nil { planner.settings.quarterStart = planner.quarter?.start ?? Date() }
-            if planner.settings.quarterEnd == nil {
-                planner.settings.quarterEnd = planner.quarter?.end ?? Date().addingTimeInterval(70 * 86400)
-            }
-        }
         .onChange(of: planner.settings.rememberCampusLogin) { on in
             if !on {
                 planner.forgetCampusLogin()
@@ -911,36 +903,51 @@ struct SchoolSetupView: View {
     private var quarterCard: some View {
         Card(title: "This Quarter", icon: "calendar") {
             Toggle("Only show work due this quarter", isOn: $planner.settings.onlyThisQuarter)
-            if let term = planner.saved.term, let start = SchoolDates.day(term.start), let end = SchoolDates.day(term.end) {
+            Picker("Quarter dates", selection: $planner.settings.quarterSource) {
+                ForEach(QuarterSource.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.radioGroup)
+            .disabled(!planner.settings.onlyThisQuarter)
+            if planner.settings.quarterSource == .schedule {
+                ForEach($planner.settings.quarters) { $quarter in
+                    HStack(spacing: 8) {
+                        TextField("Name", text: $quarter.name)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 110)
+                        DatePicker("", selection: $quarter.start, displayedComponents: [.date])
+                            .labelsHidden()
+                        Text("to").foregroundStyle(.secondary)
+                        DatePicker("", selection: $quarter.end, displayedComponents: [.date])
+                            .labelsHidden()
+                        if planner.settings.scheduledQuarter()?.id == quarter.id {
+                            Text("Now").font(.caption.bold()).foregroundColor(.accentColor)
+                        }
+                        Spacer()
+                    }
+                }
+                HStack {
+                    Button("Add Quarter") {
+                        let last = planner.settings.quarters.map(\.end).max() ?? Date()
+                        let start = Calendar.current.date(byAdding: .day, value: 3, to: last) ?? last
+                        let end = Calendar.current.date(byAdding: .day, value: 68, to: start) ?? start
+                        planner.settings.quarters.append(SchoolQuarterDates(name: "Quarter \(planner.settings.quarters.count + 1)",
+                                                                           start: start, end: end))
+                    }
+                    Button("Reset to 2026–27 Dates") { planner.settings.quarters = SchoolQuarterDates.defaults }
+                }
+                Text("Work due up to two weeks after a quarter ends still shows, in case a date is a little off.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let term = planner.saved.term, let start = SchoolDates.day(term.start), let end = SchoolDates.day(term.end) {
                 Text("Infinite Campus says the current grading period is \(term.name): \(SchoolDates.monthDay(start)) – \(SchoolDates.monthDay(end)).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Text("The quarter's dates come from Infinite Campus when it syncs. Without Infinite Campus, set them yourself below.")
+                Text("Infinite Campus hasn't reported a grading period yet – it does on the next sync. Until then your school's quarter dates are used.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Toggle("Use my own dates", isOn: $planner.settings.quarterManual)
-                .disabled(!planner.settings.onlyThisQuarter)
-            if planner.settings.quarterManual {
-                HStack {
-                    DatePicker("From", selection: quarterBinding(\.quarterStart, fallback: planner.quarter?.start ?? Date()),
-                               displayedComponents: [.date])
-                    DatePicker("to", selection: quarterBinding(\.quarterEnd, fallback: planner.quarter?.end ?? Date().addingTimeInterval(70 * 86400)),
-                               displayedComponents: [.date])
-                }
-                .frame(maxWidth: 420)
-                .disabled(!planner.settings.onlyThisQuarter)
-            }
         }
-    }
-
-    /// A date binding for an optional quarter date in the settings, filled in with `fallback` until it's set.
-    private func quarterBinding(_ path: WritableKeyPath<SchoolSettings, Date?>, fallback: Date) -> Binding<Date> {
-        Binding(
-            get: { planner.settings[keyPath: path] ?? fallback },
-            set: { planner.settings[keyPath: path] = $0 }
-        )
     }
 
     private var listCard: some View {

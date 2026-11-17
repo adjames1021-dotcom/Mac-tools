@@ -379,6 +379,44 @@ enum SchoolModels {
     ]
 }
 
+/// One quarter of the school year, as you set it.
+struct SchoolQuarterDates: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var name: String
+    var start: Date
+    var end: Date
+
+    /// This school year's quarters (2026–27).
+    static let defaults: [SchoolQuarterDates] = {
+        func day(_ year: Int, _ month: Int, _ day: Int) -> Date {
+            Calendar.current.date(from: DateComponents(year: year, month: month, day: day)) ?? Date()
+        }
+        return [
+            SchoolQuarterDates(name: "Quarter 1", start: day(2026, 8, 31), end: day(2026, 11, 6)),
+            SchoolQuarterDates(name: "Quarter 2", start: day(2026, 11, 9), end: day(2027, 1, 22)),
+            SchoolQuarterDates(name: "Quarter 3", start: day(2027, 1, 25), end: day(2027, 4, 2)),
+            SchoolQuarterDates(name: "Quarter 4", start: day(2027, 4, 5), end: day(2027, 6, 11)),
+        ]
+    }()
+}
+
+/// Where "this quarter" comes from.
+enum QuarterSource: String, Codable, CaseIterable, Identifiable {
+    /// Your school's quarter dates (set under Setup).
+    case schedule
+    /// The grading period Infinite Campus reports.
+    case campus
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .schedule: return "My school's quarter dates"
+        case .campus: return "From Infinite Campus"
+        }
+    }
+}
+
 enum CampusSignIn: String, Codable, CaseIterable, Identifiable {
     case google, password
 
@@ -413,10 +451,8 @@ struct SchoolSettings: Codable, Equatable {
     var sortByWeight = true
     /// Only show work due in the current grading period.
     var onlyThisQuarter = true
-    /// Use your own quarter dates instead of the ones from Infinite Campus.
-    var quarterManual = false
-    var quarterStart: Date?
-    var quarterEnd: Date?
+    var quarterSource = QuarterSource.schedule
+    var quarters = SchoolQuarterDates.defaults
     var compactRows = false
     var dailyReminder = false
     var reminderHour = 19
@@ -450,12 +486,24 @@ struct SchoolSettings: Codable, Equatable {
         notifyNewWork = try c.decodeIfPresent(Bool.self, forKey: .notifyNewWork) ?? d.notifyNewWork
         sortByWeight = try c.decodeIfPresent(Bool.self, forKey: .sortByWeight) ?? d.sortByWeight
         onlyThisQuarter = try c.decodeIfPresent(Bool.self, forKey: .onlyThisQuarter) ?? d.onlyThisQuarter
-        quarterManual = try c.decodeIfPresent(Bool.self, forKey: .quarterManual) ?? d.quarterManual
-        quarterStart = try? c.decodeIfPresent(Date.self, forKey: .quarterStart)
-        quarterEnd = try? c.decodeIfPresent(Date.self, forKey: .quarterEnd)
+        quarterSource = (try? c.decodeIfPresent(QuarterSource.self, forKey: .quarterSource)) ?? d.quarterSource
+        quarters = (try? c.decodeIfPresent([SchoolQuarterDates].self, forKey: .quarters)) ?? d.quarters
         compactRows = try c.decodeIfPresent(Bool.self, forKey: .compactRows) ?? d.compactRows
         dailyReminder = try c.decodeIfPresent(Bool.self, forKey: .dailyReminder) ?? d.dailyReminder
         reminderHour = try c.decodeIfPresent(Int.self, forKey: .reminderHour) ?? d.reminderHour
+    }
+}
+
+extension SchoolSettings {
+    /// The quarter from your own dates that covers `date` – or, between quarters, the next one.
+    func scheduledQuarter(on date: Date = Date()) -> SchoolQuarterDates? {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: date)
+        let valid = quarters.filter { $0.start <= $0.end }.sorted { $0.start < $1.start }
+        if let current = valid.first(where: { cal.startOfDay(for: $0.start) <= today && today <= cal.startOfDay(for: $0.end) }) {
+            return current
+        }
+        return valid.first { cal.startOfDay(for: $0.start) > today }
     }
 }
 
@@ -668,15 +716,19 @@ final class SchoolPlanner: ObservableObject {
         var label: String { "\(name) (\(SchoolDates.monthDay(start)) – \(SchoolDates.monthDay(end)))" }
     }
 
-    /// This quarter: your own dates if you set them, otherwise the grading period Infinite Campus reported.
+    /// This quarter, from your school's quarter dates or from Infinite Campus (whichever you picked, falling back to
+    /// the other when it doesn't know).
     var quarter: Quarter? {
         let cal = Calendar.current
-        if settings.quarterManual, let start = settings.quarterStart, let end = settings.quarterEnd, start <= end {
-            return Quarter(name: "This quarter", start: cal.startOfDay(for: start),
-                           end: cal.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end)
+        func make(_ name: String, _ start: Date, _ end: Date) -> Quarter {
+            Quarter(name: name, start: cal.startOfDay(for: start), end: cal.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end)
         }
-        guard let term = saved.term, let start = SchoolDates.day(term.start), let endDay = SchoolDates.day(term.end) else { return nil }
-        return Quarter(name: term.name, start: start, end: cal.date(bySettingHour: 23, minute: 59, second: 59, of: endDay) ?? endDay)
+        let mine = settings.scheduledQuarter().map { make($0.name, $0.start, $0.end) }
+        var campus: Quarter?
+        if let term = saved.term, let start = SchoolDates.day(term.start), let end = SchoolDates.day(term.end) {
+            campus = make(term.name, start, end)
+        }
+        return settings.quarterSource == .schedule ? (mine ?? campus) : (campus ?? mine)
     }
 
     /// The quarter the lists are limited to, when "only this quarter" is on.
@@ -1099,7 +1151,7 @@ final class SchoolPlanner: ObservableObject {
         // The grading period to stick to: your own dates, or the one Infinite Campus just reported.
         var promptQuarter: Quarter?
         if settings.onlyThisQuarter {
-            if let term = report.term, !settings.quarterManual, let start = SchoolDates.day(term.start), let end = SchoolDates.day(term.end) {
+            if let term = report.term, settings.quarterSource == .campus, let start = SchoolDates.day(term.start), let end = SchoolDates.day(term.end) {
                 promptQuarter = Quarter(name: term.name, start: start, end: end)
             } else {
                 promptQuarter = quarter
