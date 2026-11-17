@@ -101,21 +101,30 @@ struct SchoolPlannerView: View {
 
     @ViewBuilder
     private var quarterBanner: some View {
-        if planner.settings.onlyThisQuarter {
+        let hidden = planner.outsideQuarterCount
+        if planner.settings.onlyThisQuarter || hidden > 0 {
             HStack(spacing: 8) {
                 Image(systemName: "calendar")
-                if let quarter = planner.quarter {
-                    Text("Showing \(quarter.label) only" + (planner.outsideQuarterCount > 0 ? " · \(planner.outsideQuarterCount) from other quarters hidden" : ""))
-                } else {
-                    Text("Only this quarter is on, but its dates aren't known yet. They come from Infinite Campus on the next sync, or set them under Setup.")
-                }
+                Text(bannerText(hidden: hidden))
                 Spacer()
-                Button("Show All Quarters") { planner.settings.onlyThisQuarter = false }
-                    .buttonStyle(.borderless)
+                if planner.settings.onlyThisQuarter {
+                    Button("Show All Quarters") { planner.settings.onlyThisQuarter = false }
+                        .buttonStyle(.borderless)
+                } else {
+                    Button("Only This Quarter") { planner.settings.onlyThisQuarter = true }
+                        .buttonStyle(.borderless)
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
+    }
+
+    private func bannerText(hidden: Int) -> String {
+        let extra = hidden > 0 ? " · \(hidden) older or later item\(hidden == 1 ? "" : "s") hidden" : ""
+        if !planner.settings.onlyThisQuarter { return "Showing every quarter" + extra }
+        if let quarter = planner.quarter { return "Showing \(quarter.label)" + extra }
+        return "Showing the last 6 weeks and everything ahead – this quarter's dates come from Infinite Campus, or set them under Setup" + extra
     }
 
     // MARK: Sync

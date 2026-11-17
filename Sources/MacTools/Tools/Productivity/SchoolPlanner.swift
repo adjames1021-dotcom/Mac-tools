@@ -99,6 +99,10 @@ struct SchoolItem: Codable, Hashable, Identifiable {
     /// The keys of the item as the school site described it, kept when your edits are shown on top
     /// (so check-offs and edits stay attached even after you rename it). Also fixed for items you add.
     var originalKeys: MemoryKeys? = nil
+    /// When the work was posted or assigned (YYYY-MM-DD), if a site showed it.
+    var posted: String? = nil
+    /// Made from a Class Stream announcement ("test Friday") rather than an assignment.
+    var fromStream: Bool? = nil
 }
 
 /// The keys an item's check-off, edits and hiding are remembered under.
@@ -112,7 +116,7 @@ struct MemoryKeys: Codable, Hashable {
     /// Class + title (survives a moved due date; only trusted when no other item has the same name).
     var courseTitle: String
 
-    var all: [String] { [link, dated, titleDate, courseTitle].compactMap { $0 } }
+    var all: [String] { [link, dated, titleDate].compactMap { $0 } }
 
     /// Keys for an item you added yourself: fixed, so renaming it doesn't lose its check-off.
     static func mine(_ id: String) -> MemoryKeys {
@@ -173,6 +177,14 @@ struct SchoolTerm: Codable, Equatable {
 }
 
 extension SchoolItem {
+    var postedDate: Date? { posted.flatMap { SchoolDates.day($0) } }
+
+    /// Whether running past the due date makes it missing. Google Classroom does that itself (and so do your own
+    /// items); Infinite Campus can't see work handed in on paper, and Stream announcements simply expire.
+    var missesWhenLate: Bool {
+        fromStream != true && (source == .classroom || source == .both || source == .mine)
+    }
+
     /// The due date, or nil when there isn't one. A date without a time counts as the end of that day.
     var dueDate: Date? { SchoolDates.parse(due) }
     var dueHasTime: Bool { due.trimmed.count >= 16 }
@@ -681,13 +693,14 @@ final class SchoolPlanner: ObservableObject {
         } + changes.mine
     }
 
-    /// Finds what's remembered for an item (a check-off, edit or hide) under any of its keys.
+    /// Finds what's remembered for an item (a check-off, edit or hide): by its Classroom link, or by class + title +
+    /// due day. Title + due day (for a re-spelled class name) only counts when no other item shares it. Class + title
+    /// alone is never used: it made checking off one "Homework" check off next week's "Homework" too.
     private func lookup<Value>(_ store: [String: Value], _ item: SchoolItem) -> Value? {
         let keys = item.keys
         if let link = keys.link, let value = store[link] { return value }
-        if let value = store[keys.dated] ?? store[keys.titleDate] { return value }
-        // Class + title alone only counts when it's unambiguous (e.g. not a daily "Warm-up").
-        if (titleCounts[keys.courseTitle] ?? 0) <= 1, let value = store[keys.courseTitle] { return value }
+        if let value = store[keys.dated] { return value }
+        if (titleCounts[keys.titleDate] ?? 0) <= 1, let value = store[keys.titleDate] { return value }
         return nil
     }
 
@@ -701,18 +714,36 @@ final class SchoolPlanner: ObservableObject {
     func status(of item: SchoolItem, now: Date = Date()) -> SchoolStatus {
         if isChecked(item) { return .done }
         if edit(for: item)?.status != nil { return item.status }
-        if item.status == .todo, let due = item.dueDate, due < now { return .missing }
+        if item.status == .todo, item.missesWhenLate, let due = item.dueDate, due < now { return .missing }
         return item.status
     }
 
     /// True when the student checked it off but the school site doesn't show it as done (yet).
     func checkedOnlyByYou(_ item: SchoolItem) -> Bool { item.status != .done && isChecked(item) }
 
-    /// Not hidden, and due this quarter (when that's on). Work with no due date and your own items always show.
+    /// The dates the lists stick to when "only this quarter" is on: the quarter (plus two weeks after it, for work
+    /// that's already been handed out), or – until the quarter is known – the last six weeks and everything ahead.
+    var window: (start: Date, end: Date?)? {
+        guard settings.onlyThisQuarter else { return nil }
+        if let quarter = quarter {
+            return (quarter.start, quarter.end.addingTimeInterval(14 * 86400))
+        }
+        return (Calendar.current.startOfDay(for: Date()).addingTimeInterval(-42 * 86400), nil)
+    }
+
+    /// Not hidden, not an expired announcement, and inside the quarter (when that's on). Work with no due date is
+    /// judged by when it was posted; your own items always show.
     private func isShown(_ item: SchoolItem) -> Bool {
         if isHidden(item) { return false }
-        guard let quarter = activeQuarter, item.source != .mine, let due = item.dueDate else { return true }
-        return due >= quarter.start && due <= quarter.end
+        if item.source == .mine { return true }
+        let today = Calendar.current.startOfDay(for: Date())
+        if item.fromStream == true, item.status != .done, let due = item.dueDate, due < today { return false }
+        guard let window = window else { return true }
+        if let due = item.dueDate {
+            return due >= window.start && (window.end.map { due <= $0 } ?? true)
+        }
+        if let posted = item.postedDate { return posted >= window.start }
+        return true
     }
 
     func items(_ status: SchoolStatus, matching search: String = "") -> [SchoolItem] {
@@ -742,10 +773,9 @@ final class SchoolPlanner: ObservableObject {
 
     var hiddenCount: Int { allItems.filter { isHidden($0) }.count }
 
-    /// Items left out because they're due outside this quarter.
+    /// Items left out because they're from another quarter, too old, or expired announcements.
     var outsideQuarterCount: Int {
-        guard activeQuarter != nil else { return 0 }
-        return allItems.filter { !isHidden($0) && !isShown($0) }.count
+        allItems.filter { !isHidden($0) && !isShown($0) }.count
     }
 
     /// Class names in use, for the editor's class menu.
@@ -872,7 +902,7 @@ final class SchoolPlanner: ObservableObject {
 
     private func recountTitles() {
         var counts: [String: Int] = [:]
-        for item in saved.items { counts[item.courseTitleKey, default: 0] += 1 }
+        for item in saved.items { counts[item.titleDateKey, default: 0] += 1 }
         titleCounts = counts
     }
 
@@ -1137,6 +1167,8 @@ final class SchoolPlanner: ObservableObject {
                 notes: raw.notes.trimmed
             )
             guard !item.title.isEmpty else { continue }
+            item.posted = raw.posted.trimmed.isEmpty ? nil : raw.posted.trimmed
+            item.fromStream = raw.fromStream
             let base = item.itemLinkKey ?? item.datedKey
             let n = (used[base] ?? 0) + 1
             used[base] = n

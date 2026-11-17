@@ -24,9 +24,11 @@ enum SchoolPrompt {
                   "weight": {"type": "string"},
                   "points": {"type": "string"},
                   "url": {"type": "string"},
-                  "notes": {"type": "string"}
+                  "notes": {"type": "string"},
+                  "posted": {"type": "string"},
+                  "fromStream": {"type": "boolean"}
                 },
-                "required": ["title", "course", "source", "status", "due", "kind", "impact", "weight", "points", "url", "notes"],
+                "required": ["title", "course", "source", "status", "due", "kind", "impact", "weight", "points", "url", "notes", "posted", "fromStream"],
                 "additionalProperties": false
               }
             },
@@ -64,7 +66,10 @@ enum SchoolPrompt {
 
         Building the list
         - One entry per piece of schoolwork. When the same work appears in both Google Classroom and Infinite Campus (same class, essentially the same title), output it once with source "Both" and combine what each site says: the Classroom link, the Infinite Campus points, category and flags.
-        - status: "missing" if it's marked missing, or its due date has passed and it isn't turned in, done or graded; "done" if it's turned in, marked done, graded or returned with a score, exempt or dropped; otherwise "todo". A turned-in or graded signal beats "missing", and "missing" beats "todo".
+        - status:
+          - "missing" only when a site says so: it's on the Classroom "Missing" page or labelled "Missing" there, or Infinite Campus flags it missing. Don't mark work missing just because its date has passed.
+          - "done" if it's turned in, marked done, graded or returned with a score, exempt or dropped. Infinite Campus can't see work handed in on paper, so an Infinite Campus assignment whose due date has passed and that isn't flagged missing counts as "done".
+          - otherwise "todo". A turned-in or graded signal beats "missing", and "missing" beats "todo".
         - title: the work's own name, without the class name or status words.
         - course: a short class name, spelled the same way everywhere (e.g. "AP Biology", "English 10"). Drop section numbers, period codes and teacher names unless two classes would otherwise look the same.\(courseHint)
         - due: "YYYY-MM-DDTHH:MM" when a time is known, "YYYY-MM-DD" when only the date is known, "" when there's no due date. Work out relative dates ("Tomorrow", "Due Friday", "Yesterday") from today's date. When a date has no year, pick the year that puts it closest to today.
@@ -73,8 +78,11 @@ enum SchoolPrompt {
         - points: the possible points (e.g. "20 pts"), or the score for graded work (e.g. "18/20"); "" if unknown.
         - url: a link to this exact piece of work, copied character for character from the LINKS lists. When it appears in several places, prefer the Google Classroom item link. If no link belongs to this item, use the PAGE URL of the section it came from. Never invent a URL.
         - notes: at most one short sentence that helps the student, e.g. "Turned in late" or "Teacher comment: redo #4"; usually "".
+        - posted: the day the work was posted or assigned, as "YYYY-MM-DD", when the page shows it (Infinite Campus's assigned date, a Stream post's date, "Posted Nov 3"…); "" if unknown.
+        - fromStream: true for entries made from Class Stream announcements, false for everything else.
+        - Classroom work with no due date that was posted long before this grading period is almost always forgotten; leave it out when its posted date shows that.
         - For done work, only include items due (or turned in) in the last \(max(1, lookbackDays)) days; leave older done work out.
-        - Class Streams: turn an announcement into an entry only when it asks the student to do, study, bring, sign or submit something (e.g. "Test on chapter 5 this Friday", "Return the permission slip by Monday"). Work out its due date from the post date, pick the matching kind, put "From the class stream" in notes, and use the post's link as url. An assignment posted to the stream that also appears on the To-do pages is the same entry, not a new one. Skip posts more than three weeks old unless they name a date that's still ahead.
+        - Class Streams: turn an announcement into an entry only when it asks the student to do, study, bring, sign or submit something (e.g. "Test on chapter 5 this Friday", "Return the permission slip by Monday") and that date is today or later – skip announcements about things that are already over. Work out its due date from the post date, pick the matching kind, set fromStream to true, put "From the class stream" in notes, and use the post's link as url. Stream entries are never "missing". An assignment posted to the stream that also appears on the To-do pages is the same entry, not a new one; use the To-do page's details for it and set fromStream to false.
         - Leave out general news, class materials with nothing to do, and calendar events that aren't schoolwork.\(quarterRule)
 
         warnings: short notes about problems in the input, e.g. "The Infinite Campus page looked like a sign-in page"; [] if none.
@@ -110,6 +118,8 @@ struct AIItem: Decodable {
     let points: String
     let url: String
     let notes: String
+    let posted: String
+    let fromStream: Bool
 }
 
 struct AIOutput {

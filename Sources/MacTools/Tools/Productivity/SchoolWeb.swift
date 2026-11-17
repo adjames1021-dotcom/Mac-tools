@@ -317,7 +317,7 @@ final class SchoolScraper: NSObject {
         load(job.url) { [weak self] in
             guard let self = self else { return }
             switch job.kind {
-            case .classroom: self.readClassroom(job, maxChars: 80_000, scrollRounds: 12, completion: completion)
+            case .classroom: self.readClassroom(job, maxChars: 100_000, scrollRounds: 18, completion: completion)
             case .classroomStream: self.readClassroom(job, maxChars: 25_000, scrollRounds: 3, completion: completion)
             case .classroomClasses: self.readClasses(job, completion: completion)
             case .campus: self.readCampus(job, step: .first, completion: completion)
@@ -859,10 +859,21 @@ enum SchoolJS {
     static let readPage = shared + #"""
     const expand = () => {
       let clicked = 0;
+      // Collapsed sections ("No due date", "This week", "Later"…).
       for (const el of document.querySelectorAll('[aria-expanded="false"]')) {
         if (clicked >= 25) break;
         if (el.closest('header, nav, [role="navigation"], [role="banner"], [role="menu"], [role="dialog"], [role="listbox"]')) continue;
         if (el.hasAttribute('aria-haspopup') || !visible(el)) continue;
+        el.click();
+        clicked += 1;
+      }
+      // "View all" / "Show more" buttons that load the rest of a list (buttons only, so the page doesn't navigate away).
+      for (const el of document.querySelectorAll('button, [role="button"]')) {
+        if (clicked >= 40) break;
+        if (el.getAttribute('data-mt-clicked') || !visible(el)) continue;
+        const label = (el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+        if (!/^(view all|show all|show more|view more|load more|see all|see more|more)$/i.test(label)) continue;
+        el.setAttribute('data-mt-clicked', '1');
         el.click();
         clicked += 1;
       }
@@ -888,8 +899,7 @@ enum SchoolJS {
       if (stable >= 3 && Date.now() - started > 3500) break;
     }
     window.scrollTo(0, 0);
-    const main = mode === 'classroom' ? document.querySelector('[role="main"]') : null;
-    const text = tidy(main ? main.innerText : textOf(document, 0));
+    const text = tidy(textOf(document, 0));
     const links = [];
     const seen = new Set();
     for (const a of anchorsOf(document, 0, [])) {
@@ -929,7 +939,10 @@ enum SchoolJS {
                   students: [], pageText: '', hasPassword: false, submittedLogin: false, ssoLinks: [], term: null };
     const DAY = 86400000;
     // Grading periods appear in the grades feed as objects with a name and start/end dates. The current one is the
-    // shortest period that contains today (a quarter rather than the semester or year); between periods, the next one.
+    // period containing today that looks most like a quarter (Q2, T1, "Quarter 2"…), then the shortest (a quarter
+    // rather than the semester or year). Progress-report and exam windows are ignored. Between periods: the next one.
+    const quarterLike = (name) => /^(q|t|qtr|term|tri|mp)\s*\d|quarter|trimester|marking period|grading period|\bterm\b/i.test(name);
+    const notAPeriod = (name) => /progress|report|interim|mid-?term|midterm|exam|final|week/i.test(name);
     const termOf = (json) => {
       const terms = [];
       const walk = (node, depth) => {
@@ -938,7 +951,7 @@ enum SchoolJS {
         const name = node.termName || node.name;
         const start = node.startDate ? Date.parse(node.startDate) : NaN;
         const end = node.endDate ? Date.parse(node.endDate) : NaN;
-        if (name && !isNaN(start) && !isNaN(end) && end - start >= 20 * DAY) {
+        if (name && !notAPeriod(String(name)) && !isNaN(start) && !isNaN(end) && end - start >= 35 * DAY) {
           terms.push({ name: String(name), start: start, end: end,
                        startText: String(node.startDate).slice(0, 10), endText: String(node.endDate).slice(0, 10) });
         }
@@ -946,7 +959,9 @@ enum SchoolJS {
       };
       walk(json, 0);
       const now = Date.now();
-      const current = terms.filter((t) => t.start <= now && now <= t.end + DAY).sort((a, b) => (a.end - a.start) - (b.end - b.start));
+      const rank = (t) => (quarterLike(t.name) ? 0 : 1);
+      const current = terms.filter((t) => t.start <= now && now <= t.end + DAY)
+        .sort((a, b) => (rank(a) - rank(b)) || ((a.end - a.start) - (b.end - b.start)));
       if (current.length) return current[0];
       const upcoming = terms.filter((t) => t.start > now).sort((a, b) => a.start - b.start);
       return upcoming[0] || null;
@@ -1031,7 +1046,8 @@ enum SchoolJS {
           if (onlyThisQuarter && quarterStart && quarterEnd) {
             range = { start: Date.parse(quarterStart), end: Date.parse(quarterEnd) + DAY };
           } else if (onlyThisQuarter && found) {
-            range = { start: found.start, end: found.end + DAY };
+            // Plus two weeks after the quarter, for work that's already been handed out.
+            range = { start: found.start, end: found.end + 15 * DAY };
           }
           const list = await getJSON('/campus/api/portal/assignment/listView?personID=' + encodeURIComponent(id));
           if (Array.isArray(list)) {
