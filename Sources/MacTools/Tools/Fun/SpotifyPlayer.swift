@@ -49,8 +49,17 @@ final class SpotifyPlayer: NSObject, ObservableObject {
     func forward() { webView.goForward() }
     func reload() { webView.reload() }
 
-    /// Opens the Spotify page in MacTools with a search (e.g. "Christmas" playlists).
+    /// Opens the Spotify page in MacTools with a search (e.g. "Christmas" playlists) – in the native player when
+    /// you're signed in to it, otherwise in the web player.
     func show(search: String) {
+        if SpotifyClient.shared.isSignedIn {
+            UserDefaults.standard.set("player", forKey: "spotifyMode")
+            SpotifyClient.shared.pendingSearch = search
+            AppState.shared.selection = .spotify
+            AppState.showMainWindow()
+            return
+        }
+        UserDefaults.standard.set("web", forKey: "spotifyMode")
         started = true
         let query = search.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? search
         if let url = URL(string: "https://open.spotify.com/search/\(query)/playlists") {
@@ -60,8 +69,21 @@ final class SpotifyPlayer: NSObject, ObservableObject {
         AppState.showMainWindow()
     }
 
-    /// Presses the web player's own play/pause, next or previous button.
+    /// Play/pause, next or previous: through the native player when you're signed in to it, otherwise by pressing
+    /// the web player's own buttons.
     func control(_ control: Control) {
+        let client = SpotifyClient.shared
+        if client.isSignedIn {
+            switch control {
+            case .playPause:
+                // The menu bar may not have fresh state; read it first so play/pause does the right thing.
+                client.refreshPlayback()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { client.togglePlay() }
+            case .next: client.next()
+            case .previous: client.previous()
+            }
+            return
+        }
         guard started else {
             if control == .playPause { loadIfNeeded() }
             return
@@ -161,9 +183,31 @@ extension SpotifyPlayer: WKUIDelegate {
 
 struct SpotifyView: View {
     @ObservedObject private var player = SpotifyPlayer.shared
+    @AppStorage("spotifyMode") private var mode = "player"
 
     var body: some View {
         ToolPage(tool: .spotify, scrolls: false) {
+            Picker("", selection: $mode) {
+                Text("Player").tag("player")
+                Text("Web Player").tag("web")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 260)
+            if mode == "web" {
+                webPlayer
+            } else {
+                SpotifyNativeView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.03)))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+            }
+        }
+    }
+
+    private var webPlayer: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Button { player.back() } label: { Image(systemName: "chevron.left") }
                     .disabled(!player.canGoBack)
@@ -184,14 +228,13 @@ struct SpotifyView: View {
                     .help("Next")
                 if player.loading { ProgressView().controlSize(.small) }
                 Spacer()
-                Button("Christmas Music") { player.show(search: "Christmas") }
                 Button("Open in Spotify App") { player.openInApp() }
             }
             HostedNSView(view: player.webView)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Text("Sign in to Spotify once – MacTools remembers it. Music keeps playing when you switch tools, and the MacTools menu bar has play, pause and skip.")
+            Text("Spotify's own web page. Sign in once – MacTools remembers it, and music keeps playing when you switch tools.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

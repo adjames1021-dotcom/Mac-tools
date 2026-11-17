@@ -110,7 +110,13 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **Text to Speech**: every installed voice, speed and pitch, and export to an audio file.
 
 ### Fun & media
-- **Spotify**: Spotify's own player built into MacTools – search, your library, playlists and podcasts. Sign in once; music keeps playing while you use other tools, and the menu bar has play/pause, next and previous.
+- **Spotify**: a native Spotify player.
+  - **Home** (recently played, your top songs, playlists and albums), **Search**, **Liked Songs**, and playlist, album and artist pages.
+  - A now-playing bar with artwork, like/unlike, shuffle, previous, play/pause, next, repeat, a seek bar, volume and a **device picker** (play here or on your phone, speakers or the Spotify app).
+  - Music plays inside MacTools itself: it appears in Spotify as a device called “MacTools” (Spotify's Web Playback SDK, Premium). The menu bar's Spotify menu controls it too.
+  - For offline listening, **Download in Spotify App** opens a playlist or album in the Spotify app, where Premium's Download switch saves it.
+  - Setup, once: create a free app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), add `http://127.0.0.1:8573/callback` as its Redirect URI, tick Web API and Web Playback SDK, and paste its Client ID into MacTools. The Spotify page walks you through it.
+  - A **Web Player** tab shows Spotify's own web page instead.
 - **Christmas**: switch on falling snow (flurries, snowfall or a blizzard), twinkling lights along the top of every page, red-and-green Christmas colors, snowflakes on tool icons, a snowflake menu bar icon with the days until Christmas, a countdown on the Home page, jingle bells when you check off schoolwork or a sync finishes, ornament check-offs in School To-Do and one-click Christmas music. Each is its own switch, and they can be limited to December 1–26.
 
 ### Developer
