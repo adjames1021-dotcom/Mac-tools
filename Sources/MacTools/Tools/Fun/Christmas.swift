@@ -364,16 +364,6 @@ struct ChristmasView: View {
                     Button("Ring") { Jingle.shared.play(Jingle.chorus) }
                 }
                 Toggle("Ornament check-offs in School To-Do", isOn: $christmas.settings.ornaments)
-                HStack {
-                    Button {
-                        SpotifyPlayer.shared.show(search: "Christmas")
-                    } label: {
-                        Label("Christmas Music", systemImage: "music.note")
-                    }
-                    Text("Opens Christmas playlists in the built-in Spotify player.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             }
             Card(title: "When", icon: "clock") {
                 Toggle("Only from December 1st to 26th", isOn: $christmas.settings.onlyInSeason)

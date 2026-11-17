@@ -4,7 +4,7 @@ enum ToolCategory: String, CaseIterable, Identifiable, Hashable {
     case general = "General"
     case automation = "Automation"
     case productivity = "Productivity"
-    case fun = "Fun & Media"
+    case fun = "Fun"
     case developer = "Developer"
     case text = "Text & Data"
     case files = "Files & Media"
@@ -22,8 +22,8 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     case macroRecorder, autoClicker, autoTyper, keyPresser, textExpander, keepAwake, scheduler, shellRunner, launcher, keyboardLock
     // Productivity
     case schoolPlanner, clipboard, notes, timers, windowManager, screenshot, colorPicker, mouseInspector, speech
-    // Fun & media
-    case spotify, christmas
+    // Fun
+    case christmas
     // Developer
     case httpClient, gitHelper, portMonitor, devEnvironment, homebrew, sshKeys, jwtDecoder, urlParser, csvJson, cronHelper, markdownPreview, snippets, gitignoreGen, hexViewer, chromeExtensionViewer, encryption, keyCodeViewer, devCleaner
     // Text & data
@@ -42,7 +42,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     var category: ToolCategory {
         switch self {
         case .home, .themes, .settings, .updates: return .general
-        case .spotify, .christmas: return .fun
+        case .christmas: return .fun
         case .httpClient, .gitHelper, .portMonitor, .devEnvironment, .homebrew, .sshKeys, .jwtDecoder, .urlParser, .csvJson, .cronHelper, .markdownPreview, .snippets, .gitignoreGen, .hexViewer, .chromeExtensionViewer, .encryption, .keyCodeViewer, .devCleaner:
             return .developer
         case .macroRecorder, .autoClicker, .autoTyper, .keyPresser, .textExpander, .keepAwake, .scheduler, .shellRunner, .launcher, .keyboardLock:
@@ -66,7 +66,6 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: return "Home"
         case .themes: return "Themes"
-        case .spotify: return "Spotify"
         case .christmas: return "Christmas"
         case .settings: return "Permissions & Hotkeys"
         case .updates: return "Updates"
@@ -137,7 +136,6 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: return "square.grid.2x2"
         case .themes: return "paintpalette"
-        case .spotify: return "music.note"
         case .christmas: return "snowflake"
         case .settings: return "lock.shield"
         case .updates: return "arrow.down.circle"
@@ -208,7 +206,6 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: return "Every tool in one place."
         case .themes: return "Color themes and Light or Dark mode for all of MacTools."
-        case .spotify: return "Spotify's player built into MacTools: search, your library and playlists."
         case .christmas: return "Snow, twinkling lights, a countdown, jingle bells and more festive touches."
         case .settings: return "Grant permissions, customise global hotkeys and app options."
         case .updates: return "Update MacTools automatically from GitHub – no rebuilding by hand."
@@ -279,7 +276,6 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: return AnyView(HomeView())
         case .themes: return AnyView(ThemesView())
-        case .spotify: return AnyView(SpotifyView())
         case .christmas: return AnyView(ChristmasView())
         case .settings: return AnyView(SettingsToolView())
         case .updates: return AnyView(UpdatesView())

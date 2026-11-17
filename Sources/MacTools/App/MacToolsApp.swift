@@ -133,15 +133,6 @@ struct MenuBarContent: View {
             Button("Stop All Automation") { Automation.stopAll() }
         }
         Divider()
-        Menu("Spotify") {
-            Button("Play / Pause") { SpotifyPlayer.shared.control(.playPause) }
-            Button("Next") { SpotifyPlayer.shared.control(.next) }
-            Button("Previous") { SpotifyPlayer.shared.control(.previous) }
-            Divider()
-            Button("Christmas Music") { SpotifyPlayer.shared.show(search: "Christmas") }
-            Button("Open Spotify Player") { show(.spotify) }
-        }
-        Divider()
         Menu("Tools") {
             ForEach(ToolID.allCases.filter { $0 != .home }) { tool in
                 Button(tool.title) { show(tool) }
