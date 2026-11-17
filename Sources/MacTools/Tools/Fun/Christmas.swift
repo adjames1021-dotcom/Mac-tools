@@ -289,7 +289,7 @@ final class Jingle {
         let sampleRate = 44_100.0
         let beat = 0.18
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else { return }
-        let seconds = notes.reduce(0) { $0 + $1.1 } * beat + 0.9
+        let seconds = notes.reduce(0.0) { $0 + $1.1 } * beat + 0.9
         let frames = AVAudioFrameCount(seconds * sampleRate)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
               let samples = buffer.floatChannelData?[0] else { return }

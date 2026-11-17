@@ -320,6 +320,8 @@ enum SchoolSignIn {
         case .other:
             SchoolBrowser.shared.open(planner.settings.extraPages.first.flatMap { SchoolWeb.normalizedURL($0) },
                                       message: "Sign in to the page, then click Done.")
+        case .mine:
+            break   // items you added yourself don't come from a website
         }
     }
 }
