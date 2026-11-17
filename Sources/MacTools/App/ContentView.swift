@@ -40,18 +40,22 @@ struct ContentView: View {
                 tool.makeView()
                     .id(tool)
                     .navigationTitle(tool.title)
+                    .background(ThemeBackdrop())
+                    .overlay(alignment: .top) { LightsOverlay() }
             } else {
                 Text("Select a tool from the sidebar")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .overlay { SnowOverlay() }
     }
 }
 
 struct HomeView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var permissions = Permissions.shared
+    @ObservedObject private var christmas = ChristmasManager.shared
 
     private let columns = [GridItem(.adaptive(minimum: 210), spacing: 12)]
 
@@ -65,6 +69,11 @@ struct HomeView: View {
                 QuickStat(title: "Stop everything", value: HotKeyCenter.shared.displayString(for: .stopAll), icon: "stop.circle")
                 QuickStat(title: "Record macro", value: HotKeyCenter.shared.displayString(for: .toggleMacroRecording), icon: "record.circle")
                 QuickStat(title: "Auto clicker", value: HotKeyCenter.shared.displayString(for: .toggleAutoClicker), icon: "cursorarrow.click.2")
+                if christmas.showCountdown {
+                    let days = ChristmasManager.daysUntilChristmas()
+                    QuickStat(title: days == 0 ? "Merry Christmas!" : "Until Christmas",
+                              value: days == 0 ? "🎄" : "\(days) day\(days == 1 ? "" : "s")", icon: "gift")
+                }
             }
             ForEach(ToolCategory.allCases.filter { $0 != .general }) { category in
                 VStack(alignment: .leading, spacing: 8) {

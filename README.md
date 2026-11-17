@@ -2,6 +2,8 @@
 
 One native macOS app with 60 tools: a keyboard & mouse **macro recorder/player**, an **auto clicker that can also press keys**, an **auto typer**, a **PDF editor**, key presser, text expander, window snapping, clipboard history and lots more. It's written in Swift/SwiftUI, has no dependencies, and is built on your own Mac from this source code.
 
+**Themes**: pick a color theme for all of MacTools – Classic, Ocean, Forest, Sunset, Grape, Candy, Midnight, Graphite, Frost or Cocoa – and Auto, Light or Dark mode.
+
 ## Getting started
 
 1. **Download** this repository (green **Code** button ▸ **Download ZIP**, then unzip it) or `git clone` it.
@@ -95,7 +97,9 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
   - Work goes into separate **To-Do**, **Missing** and **Done** lists, **grouped by class**. Inside each class, the work that **counts most toward your grade** comes first (from Infinite Campus category weights and points, or estimated from the kind of work), or switch to soonest due first.
   - Each item links straight to the assignment when the site has a link, and **what you check off is remembered** across syncs.
   - **Sign in once**: the built-in browser remembers your Google sign-in, and Infinite Campus is signed back in automatically – through Google single sign-on, or with a username and password saved in the keychain.
-  - A progress bar shows each step. It can also sync automatically, notify you about new work, and copy the list as Markdown.
+  - **Edit anything**: right-click (or click the pencil) to change an item's due date, title, class, how much it counts, which list it's in, notes or link. Your edits stay after every sync; the school sites aren't changed. **Add your own items**, **hide** ones you don't care about, and **search**.
+  - **Only this quarter**: shows just the work due in the current grading period, with the dates taken from Infinite Campus (or set them yourself).
+  - Each class gets its own color from your theme. A progress bar shows each step. It can also sync automatically, notify you about new work, remind you every evening about what's due tomorrow, and copy the list as Markdown.
 - **Clipboard History**: a searchable list with pinning. It skips passwords copied from password managers.
 - **Quick Notes**: a scratchpad that saves automatically, with search and export.
 - **Timers**: stopwatch with laps, a countdown with spoken alerts, and a Pomodoro focus timer.
@@ -104,6 +108,10 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **Color Picker**: picks any pixel on screen and shows HEX, RGB, HSL, HSB, CMYK, SwiftUI, NSColor and UIColor values, plus shades, contrast ratios and history.
 - **Mouse & Screen Ruler**: live cursor coordinates (for setting up clicks), display info, and point-to-point distance measuring.
 - **Text to Speech**: every installed voice, speed and pitch, and export to an audio file.
+
+### Fun & media
+- **Spotify**: Spotify's own player built into MacTools – search, your library, playlists and podcasts. Sign in once; music keeps playing while you use other tools, and the menu bar has play/pause, next and previous.
+- **Christmas**: switch on falling snow (flurries, snowfall or a blizzard), twinkling lights along the top of every page, red-and-green Christmas colors, snowflakes on tool icons, a snowflake menu bar icon with the days until Christmas, a countdown on the Home page, jingle bells when you check off schoolwork or a sync finishes, ornament check-offs in School To-Do and one-click Christmas music. Each is its own switch, and they can be limited to December 1–26.
 
 ### Developer
 - **HTTP / API Client**: send GET/POST/PUT/PATCH/DELETE requests with headers and JSON bodies, see status, timing, headers and pretty-printed responses, keep a history, copy as cURL.
@@ -163,7 +171,7 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 
 Macros, snippets, notes, schedules, launcher profiles and clipboard history are stored as JSON in `~/Library/Application Support/MacTools`. **Permissions & Hotkeys ▸ Open Data Folder** takes you there.
 
-School To-Do keeps its list in `school-todo.json` and your check-offs in `school-todo-checked.json` in that folder. Its API keys and the optional Infinite Campus login are in your login keychain, and the school sites' sign-in cookies are in MacTools' website data (**School To-Do ▸ Setup ▸ Sign Out of All School Sites** clears them).
+School To-Do keeps its list in `school-todo.json`, your check-offs in `school-todo-checked.json`, and your edits, hidden items and added items in `school-todo-changes.json` in that folder. Its API keys and the optional Infinite Campus login are in your login keychain, and the school sites' sign-in cookies are in MacTools' website data (**School To-Do ▸ Setup ▸ Sign Out of All School Sites** clears them).
 
 ## Project layout
 

@@ -39,10 +39,16 @@ enum SchoolPrompt {
         return (try? JSONSerialization.jsonObject(with: Data(json.utf8))) ?? [String: Any]()
     }()
 
-    static func system(lookbackDays: Int, knownCourses: [String]) -> String {
+    static func system(lookbackDays: Int, knownCourses: [String], quarter: (name: String, start: Date, end: Date)? = nil) -> String {
         let today = DateFormatter()
         today.locale = Locale(identifier: "en_US_POSIX")
         today.dateFormat = "EEEE, MMMM d, yyyy 'at' HH:mm"
+        let day = DateFormatter()
+        day.locale = Locale(identifier: "en_US_POSIX")
+        day.dateFormat = "MMMM d, yyyy"
+        let quarterRule = quarter.map {
+            "\n- Only include work due in this grading period, \($0.name): \(day.string(from: $0.start)) to \(day.string(from: $0.end)). Leave out work due before or after it (work with no due date can stay)."
+        } ?? ""
         let courseHint = knownCourses.isEmpty ? "" :
             " Class names used last time (reuse these exact spellings when they match): " + knownCourses.joined(separator: "; ") + "."
         return """
@@ -69,7 +75,7 @@ enum SchoolPrompt {
         - notes: at most one short sentence that helps the student, e.g. "Turned in late" or "Teacher comment: redo #4"; usually "".
         - For done work, only include items due (or turned in) in the last \(max(1, lookbackDays)) days; leave older done work out.
         - Class Streams: turn an announcement into an entry only when it asks the student to do, study, bring, sign or submit something (e.g. "Test on chapter 5 this Friday", "Return the permission slip by Monday"). Work out its due date from the post date, pick the matching kind, put "From the class stream" in notes, and use the post's link as url. An assignment posted to the stream that also appears on the To-do pages is the same entry, not a new one. Skip posts more than three weeks old unless they name a date that's still ahead.
-        - Leave out general news, class materials with nothing to do, and calendar events that aren't schoolwork.
+        - Leave out general news, class materials with nothing to do, and calendar events that aren't schoolwork.\(quarterRule)
 
         warnings: short notes about problems in the input, e.g. "The Infinite Campus page looked like a sign-in page"; [] if none.
         """

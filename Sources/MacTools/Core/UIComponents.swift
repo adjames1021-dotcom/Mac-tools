@@ -42,6 +42,7 @@ struct ToolHeader: View {
                         .fill(LinearGradient(colors: [Color.accentColor, Color.accentColor.opacity(0.65)],
                                              startPoint: .topLeading, endPoint: .bottomTrailing))
                 )
+                .overlay(alignment: .topTrailing) { FestiveBadge() }
             VStack(alignment: .leading, spacing: 2) {
                 Text(tool.title).font(.title2.bold())
                 Text(tool.summary).foregroundStyle(.secondary)

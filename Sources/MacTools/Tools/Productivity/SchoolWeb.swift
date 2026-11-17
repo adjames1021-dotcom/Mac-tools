@@ -26,6 +26,8 @@ struct ScrapeReport {
     /// Sites that need the user to sign in, with what to tell them.
     var signIn: [SchoolSource: String] = [:]
     var warnings: [String] = []
+    /// The current grading period, if Infinite Campus reported one.
+    var term: SchoolTerm?
 }
 
 struct ScrapeIssue: LocalizedError {
@@ -223,6 +225,7 @@ final class SchoolScraper: NSObject {
         let hasPassword: Bool
         let submittedLogin: Bool
         let ssoLinks: [String]
+        let term: SchoolTerm?
     }
 
     private enum Outcome {
@@ -407,7 +410,14 @@ final class SchoolScraper: NSObject {
             "username": "",
             "password": "",
             "tryLogin": false,
+            "onlyThisQuarter": settings.onlyThisQuarter,
+            "quarterStart": "",
+            "quarterEnd": "",
         ]
+        if settings.onlyThisQuarter, settings.quarterManual, let start = settings.quarterStart, let end = settings.quarterEnd {
+            args["quarterStart"] = SchoolDates.dayString(start)
+            args["quarterEnd"] = SchoolDates.dayString(end)
+        }
         if !usesGoogle, step != .afterSignIn, let credentials = credentials {
             args["username"] = credentials.user
             args["password"] = credentials.password
@@ -421,6 +431,7 @@ final class SchoolScraper: NSObject {
                 return
             case .success(let campus):
                 if campus.loggedIn {
+                    if let term = campus.term { self.report.term = term }
                     completion(.page(Self.campusPage(campus, job: job, link: site?.loginURL ?? job.url.absoluteString)))
                     return
                 }
@@ -912,10 +923,34 @@ enum SchoolJS {
     /// Reads assignments and grade categories through the Infinite Campus portal's own data feeds (the same ones its
     /// web pages use), signed in with the browser's cookies. If the user isn't signed in and a saved username and
     /// password were passed, fills in the sign-in form on the expected host only.
-    /// Arguments: lookbackDays, expectedHost, username, password, tryLogin.
+    /// Arguments: lookbackDays, expectedHost, username, password, tryLogin, onlyThisQuarter, quarterStart, quarterEnd.
     static let readCampus = shared + #"""
     const out = { url: location.href, host: location.host, loggedIn: false, apiWorked: false, lines: [], categories: [],
-                  students: [], pageText: '', hasPassword: false, submittedLogin: false, ssoLinks: [] };
+                  students: [], pageText: '', hasPassword: false, submittedLogin: false, ssoLinks: [], term: null };
+    const DAY = 86400000;
+    // Grading periods appear in the grades feed as objects with a name and start/end dates. The current one is the
+    // shortest period that contains today (a quarter rather than the semester or year); between periods, the next one.
+    const termOf = (json) => {
+      const terms = [];
+      const walk = (node, depth) => {
+        if (!node || typeof node !== 'object' || depth > 10) return;
+        if (Array.isArray(node)) { for (const child of node) walk(child, depth + 1); return; }
+        const name = node.termName || node.name;
+        const start = node.startDate ? Date.parse(node.startDate) : NaN;
+        const end = node.endDate ? Date.parse(node.endDate) : NaN;
+        if (name && !isNaN(start) && !isNaN(end) && end - start >= 20 * DAY) {
+          terms.push({ name: String(name), start: start, end: end,
+                       startText: String(node.startDate).slice(0, 10), endText: String(node.endDate).slice(0, 10) });
+        }
+        for (const key in node) { const child = node[key]; if (child && typeof child === 'object') walk(child, depth + 1); }
+      };
+      walk(json, 0);
+      const now = Date.now();
+      const current = terms.filter((t) => t.start <= now && now <= t.end + DAY).sort((a, b) => (a.end - a.start) - (b.end - b.start));
+      if (current.length) return current[0];
+      const upcoming = terms.filter((t) => t.start > now).sort((a, b) => a.start - b.start);
+      return upcoming[0] || null;
+    };
     const getJSON = async (path) => {
       try {
         const response = await fetch(path, { credentials: 'include', headers: { 'Accept': 'application/json' } });
@@ -987,6 +1022,17 @@ enum SchoolJS {
           out.students.push(name);
           const id = student.personID;
           if (id === undefined || id === null) continue;
+          const grades = await getJSON('/campus/resources/portal/grades?personID=' + encodeURIComponent(id));
+          if (grades) out.categories.push(...categoryLines(grades, several ? name : ''));
+          const found = grades ? termOf(grades) : null;
+          if (found && !out.term) out.term = { name: found.name, start: found.startText, end: found.endText };
+          // Only this quarter: your own dates if given, otherwise the grading period found above.
+          let range = null;
+          if (onlyThisQuarter && quarterStart && quarterEnd) {
+            range = { start: Date.parse(quarterStart), end: Date.parse(quarterEnd) + DAY };
+          } else if (onlyThisQuarter && found) {
+            range = { start: found.start, end: found.end + DAY };
+          }
           const list = await getJSON('/campus/api/portal/assignment/listView?personID=' + encodeURIComponent(id));
           if (Array.isArray(list)) {
             out.apiWorked = true;
@@ -994,14 +1040,13 @@ enum SchoolJS {
             for (const a of list) {
               if (!a || typeof a !== 'object') continue;
               const due = a.dueDate ? Date.parse(a.dueDate) : NaN;
+              if (range && !isNaN(due) && (due < range.start || due >= range.end)) continue;   // another quarter
               if (!a.missing && !isNaN(due) && due < cutoff) continue;   // old, not missing: leave out
               rows.push({ due: isNaN(due) ? Infinity : due, line: describe(a, several ? name : '') });
             }
             rows.sort((x, y) => x.due - y.due);
             out.lines.push(...rows.slice(0, 600).map((r) => r.line));
           }
-          const grades = await getJSON('/campus/resources/portal/grades?personID=' + encodeURIComponent(id));
-          if (grades) out.categories.push(...categoryLines(grades, several ? name : ''));
         }
       }
     }

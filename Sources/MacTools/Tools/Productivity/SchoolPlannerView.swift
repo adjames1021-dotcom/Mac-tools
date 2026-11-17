@@ -1,9 +1,20 @@
 import SwiftUI
 import AppKit
 
+/// What the item editor sheet is open for.
+struct EditTarget: Identifiable {
+    let id = UUID()
+    /// nil = adding a new item of your own.
+    let item: SchoolItem?
+}
+
 struct SchoolPlannerView: View {
     @ObservedObject private var planner = SchoolPlanner.shared
+    @ObservedObject private var themes = ThemeManager.shared
+    @ObservedObject private var christmas = ChristmasManager.shared
     @State private var tab: Tab = .todo
+    @State private var search = ""
+    @State private var editing: EditTarget?
 
     enum Tab: String, CaseIterable, Identifiable {
         case todo, missing, done, setup
@@ -36,6 +47,10 @@ struct SchoolPlannerView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
 
+            if tab != .setup {
+                listTools
+                quarterBanner
+            }
             switch tab {
             case .todo: list(.todo)
             case .missing: list(.missing)
@@ -45,6 +60,61 @@ struct SchoolPlannerView: View {
         }
         .onAppear {
             if !planner.hasKey(planner.settings.provider) { tab = .setup }
+        }
+        .sheet(item: $editing) { target in
+            SchoolItemEditor(original: target.item)
+                .themedRoot()
+        }
+    }
+
+    // MARK: Search, add, quarter
+
+    private var listTools: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search assignments", text: $search)
+                    .textFieldStyle(.plain)
+                if !search.isEmpty {
+                    Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+            .frame(maxWidth: 320)
+            Button {
+                editing = EditTarget(item: nil)
+            } label: {
+                Label("Add", systemImage: "plus")
+            }
+            .help("Add your own item to the list")
+            if planner.hiddenCount > 0 {
+                Button("Show \(planner.hiddenCount) Hidden") { planner.unhideAll() }
+                    .help("Bring back everything you hid")
+            }
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var quarterBanner: some View {
+        if planner.settings.onlyThisQuarter {
+            HStack(spacing: 8) {
+                Image(systemName: "calendar")
+                if let quarter = planner.quarter {
+                    Text("Showing \(quarter.label) only" + (planner.outsideQuarterCount > 0 ? " · \(planner.outsideQuarterCount) from other quarters hidden" : ""))
+                } else {
+                    Text("Only this quarter is on, but its dates aren't known yet. They come from Infinite Campus on the next sync, or set them under Setup.")
+                }
+                Spacer()
+                Button("Show All Quarters") { planner.settings.onlyThisQuarter = false }
+                    .buttonStyle(.borderless)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -137,7 +207,7 @@ struct SchoolPlannerView: View {
 
     @ViewBuilder
     private func list(_ status: SchoolStatus) -> some View {
-        let items = planner.items(status)
+        let items = planner.items(status, matching: search)
         if status != .done && !items.isEmpty {
             HStack(spacing: 8) {
                 Text("In each class:").font(.callout).foregroundStyle(.secondary)
@@ -151,13 +221,21 @@ struct SchoolPlannerView: View {
                 Spacer()
             }
         }
-        if items.isEmpty {
+        if items.isEmpty && !search.trimmed.isEmpty {
+            Text("Nothing matches “\(search.trimmed)”.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 30)
+        } else if items.isEmpty {
             emptyState(status)
         } else {
             ForEach(sections(items, status)) { section in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Label(section.title, systemImage: "book.closed").font(.title3.bold())
+                        Circle()
+                            .fill(themes.color(for: section.title))
+                            .frame(width: 12, height: 12)
+                        Text(section.title).font(.title3.bold())
                         if !section.subtitle.isEmpty {
                             Text(section.subtitle).font(.caption).foregroundStyle(.secondary)
                         }
@@ -166,7 +244,7 @@ struct SchoolPlannerView: View {
                     }
                     .padding(.top, 8)
                     ForEach(section.items) { item in
-                        SchoolItemRow(item: item, status: status)
+                        SchoolItemRow(item: item, status: status) { editing = EditTarget(item: $0) }
                     }
                 }
             }
@@ -251,7 +329,10 @@ enum SchoolSignIn {
 struct SchoolItemRow: View {
     let item: SchoolItem
     let status: SchoolStatus
+    let onEdit: (SchoolItem) -> Void
     @ObservedObject private var planner = SchoolPlanner.shared
+    @ObservedObject private var themes = ThemeManager.shared
+    @ObservedObject private var christmas = ChristmasManager.shared
     @State private var hovering = false
 
     private var dueColor: Color {
@@ -263,39 +344,56 @@ struct SchoolItemRow: View {
         return .secondary
     }
 
+    private var compact: Bool { planner.settings.compactRows }
+
     var body: some View {
         let checked = planner.isChecked(item)
-        let doneAtSchool = item.status == .done
-        let showsDone = checked || doneAtSchool
+        let doneAtSchool = item.status == .done && !planner.isEdited(item)
+        let showsDone = checked || item.status == .done
+        let ornament = christmas.showOrnaments
         HStack(alignment: .top, spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(themes.color(for: item.course))
+                .frame(width: 4)
             Button {
+                if !checked { Jingle.shared.playIfOn(Jingle.ding) }
                 planner.toggleChecked(item)
             } label: {
-                Image(systemName: showsDone ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundColor(showsDone ? .green : .secondary)
+                Image(systemName: ornament ? (showsDone ? "gift.fill" : "gift") : (showsDone ? "checkmark.circle.fill" : "circle"))
+                    .font(compact ? Font.title3 : Font.title2)
+                    .foregroundColor(showsDone ? (ornament ? ChristmasManager.red : Color.green) : Color.secondary)
             }
             .buttonStyle(.plain)
             .disabled(doneAtSchool && !checked)
             .help(doneAtSchool ? "Marked done on \(item.source.shortName)"
                   : checked ? "Uncheck" : "Check off – MacTools remembers this, even after syncing")
 
-            VStack(alignment: .leading, spacing: 4) {
-                if let link = item.link {
-                    Button {
-                        NSWorkspace.shared.open(link)
-                    } label: {
+            VStack(alignment: .leading, spacing: compact ? 2 : 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if let link = item.link {
+                        Button {
+                            NSWorkspace.shared.open(link)
+                        } label: {
+                            Text(item.title)
+                                .font(compact ? Font.callout.weight(.semibold) : Font.headline)
+                                .strikethrough(status == .done)
+                                .multilineTextAlignment(.leading)
+                        }
+                        .buttonStyle(.link)
+                        .help(link.absoluteString)
+                    } else {
                         Text(item.title)
-                            .font(.headline)
+                            .font(compact ? Font.callout.weight(.semibold) : Font.headline)
                             .strikethrough(status == .done)
-                            .multilineTextAlignment(.leading)
                     }
-                    .buttonStyle(.link)
-                    .help(link.absoluteString)
-                } else {
-                    Text(item.title)
-                        .font(.headline)
-                        .strikethrough(status == .done)
+                    if planner.isEdited(item) {
+                        Text("Edited")
+                            .font(.caption2)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+                            .help("You changed this. Edit it again to undo.")
+                    }
                 }
                 HStack(spacing: 12) {
                     Label(SchoolDates.describe(item), systemImage: "calendar")
@@ -312,19 +410,29 @@ struct SchoolItemRow: View {
                 if planner.checkedOnlyByYou(item) {
                     Text("Checked off by you").font(.caption).foregroundColor(.green)
                 }
-                if !item.notes.isEmpty {
+                if !item.notes.isEmpty && !compact {
                     Text(item.notes).font(.caption)
                 }
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 5) {
                 ImpactBadge(impact: item.impact, weight: item.weight)
-                Text(item.source.shortName)
-                    .font(.caption2)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.primary.opacity(0.07)))
+                if !compact {
+                    Text(item.source.shortName)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.primary.opacity(0.07)))
+                }
             }
+            Button {
+                onEdit(item)
+            } label: {
+                Image(systemName: "pencil").font(.title3)
+            }
+            .buttonStyle(.borderless)
+            .opacity(hovering ? 1 : 0.35)
+            .help("Edit the due date, title, class and more")
             if let link = item.link {
                 Button {
                     NSWorkspace.shared.open(link)
@@ -335,19 +443,192 @@ struct SchoolItemRow: View {
                 .help("Open in your browser")
             }
         }
-        .padding(10)
+        .padding(compact ? 6 : 10)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(hovering ? 0.08 : 0.04)))
         .onHover { hovering = $0 }
         .contextMenu {
+            Button("Edit…") { onEdit(item) }
+            Button(checked ? "Uncheck" : "Check Off") { planner.toggleChecked(item) }
+                .disabled(doneAtSchool && !checked)
             if let link = item.link {
+                Divider()
                 Button("Open in Browser") { NSWorkspace.shared.open(link) }
                 Button("Open in MacTools Sign-In Browser") { SchoolBrowser.shared.open(link, message: "") }
                 Button("Copy Link") { ClipboardHelper.copy(link.absoluteString) }
-                Divider()
             }
-            Button(checked ? "Uncheck" : "Check Off") { planner.toggleChecked(item) }
-                .disabled(doneAtSchool && !checked)
+            Divider()
+            if item.source == .mine {
+                Button("Delete") { planner.deleteMine(item) }
+            } else {
+                Button("Hide") { planner.hide(item) }
+                if planner.isEdited(item) {
+                    Button("Undo My Edits") { planner.undoEdits(item) }
+                }
+            }
         }
+    }
+}
+
+// MARK: - Editor
+
+/// Edit a synced item (your changes are kept on top of what the school site says) or add/edit one of your own.
+struct SchoolItemEditor: View {
+    let original: SchoolItem?
+    @ObservedObject private var planner = SchoolPlanner.shared
+    @Environment(\.dismiss) private var dismiss
+
+    enum ListChoice: String, CaseIterable, Identifiable {
+        case automatic, todo, missing, done
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .automatic: return "Automatic"
+            case .todo: return "To-Do"
+            case .missing: return "Missing"
+            case .done: return "Done"
+            }
+        }
+    }
+
+    @State private var title: String
+    @State private var course: String
+    @State private var hasDue: Bool
+    @State private var due: Date
+    @State private var hasTime: Bool
+    @State private var impact: GradeImpact
+    @State private var list: ListChoice
+    @State private var notes: String
+    @State private var link: String
+
+    private var isMine: Bool { original == nil || original?.source == .mine }
+
+    init(original: SchoolItem?) {
+        self.original = original
+        let item = original
+        _title = State(initialValue: item?.title ?? "")
+        _course = State(initialValue: item?.course ?? "")
+        let date = item?.dueDate
+        _hasDue = State(initialValue: original == nil || date != nil)
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+        _due = State(initialValue: date ?? Calendar.current.date(bySettingHour: 23, minute: 59, second: 0, of: tomorrow) ?? tomorrow)
+        _hasTime = State(initialValue: item?.dueHasTime ?? false)
+        _impact = State(initialValue: item?.impact ?? .medium)
+        var choice = ListChoice.automatic
+        if let item = item {
+            if item.source == .mine {
+                choice = ListChoice(rawValue: item.status.rawValue) ?? .todo
+            } else if let status = SchoolPlanner.shared.edit(for: item)?.status {
+                choice = ListChoice(rawValue: status.rawValue) ?? .automatic
+            }
+        } else {
+            choice = .todo
+        }
+        _list = State(initialValue: choice)
+        _notes = State(initialValue: item?.notes ?? "")
+        _link = State(initialValue: item?.url ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(original == nil ? "Add to Your List" : "Edit")
+                .font(.title2.bold())
+                .padding([.top, .horizontal], 20)
+            Form {
+                TextField("Title", text: $title)
+                HStack {
+                    TextField("Class", text: $course)
+                    Menu {
+                        ForEach(planner.courseNames, id: \.self) { name in
+                            Button(name) { course = name }
+                        }
+                    } label: {
+                        Image(systemName: "list.bullet")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .disabled(planner.courseNames.isEmpty)
+                }
+                Toggle("Has a due date", isOn: $hasDue)
+                if hasDue {
+                    DatePicker("Due", selection: $due, displayedComponents: hasTime ? [.date, .hourAndMinute] : [.date])
+                    Toggle("Includes a time", isOn: $hasTime)
+                }
+                Picker("Counts toward grade", selection: $impact) {
+                    ForEach(GradeImpact.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("List", selection: $list) {
+                    ForEach(ListChoice.allCases.filter { !isMine || $0 != .automatic }) { Text($0.title).tag($0) }
+                }
+                TextField("Notes", text: $notes)
+                TextField("Link", text: $link)
+            }
+            .formStyle(.grouped)
+            if !isMine {
+                Text("Your changes stay after every sync. The school site itself isn't changed. “Automatic” lets the school site decide the list.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+            }
+            HStack {
+                if let original = original {
+                    if isMine {
+                        Button("Delete", role: .destructive) {
+                            planner.deleteMine(original)
+                            dismiss()
+                        }
+                    } else if planner.isEdited(original) {
+                        Button("Undo My Edits") {
+                            planner.undoEdits(original)
+                            dismiss()
+                        }
+                    }
+                }
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    save()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(title.trimmed.isEmpty)
+            }
+            .padding(20)
+        }
+        .frame(width: 480)
+    }
+
+    private func save() {
+        let dueText = hasDue ? SchoolDates.format(due, withTime: hasTime) : ""
+        let status = SchoolStatus(rawValue: list.rawValue)
+        if isMine {
+            var item = original ?? SchoolItem(id: "mine:" + UUID().uuidString, title: "", course: "", source: .mine,
+                                              status: .todo, due: "", kind: "other", impact: .medium, weight: "",
+                                              points: "", url: "", notes: "")
+            item.title = title.trimmed
+            item.course = course.trimmed
+            item.due = dueText
+            item.impact = impact
+            item.status = status ?? .todo
+            item.notes = notes.trimmed
+            item.url = link.trimmed
+            planner.saveMine(item)
+            return
+        }
+        guard let shown = original else { return }
+        // Only keep what differs from what the school site says.
+        let school = planner.schoolVersion(of: shown) ?? shown
+        var edit = SchoolEdit()
+        if title.trimmed != school.title { edit.title = title.trimmed }
+        if course.trimmed != school.course { edit.course = course.trimmed }
+        if dueText != school.due && !(dueText.isEmpty && school.due.isEmpty) {
+            edit.due = dueText
+        }
+        if impact != school.impact { edit.impact = impact }
+        edit.status = status
+        if notes.trimmed != school.notes { edit.notes = notes.trimmed }
+        if link.trimmed != school.url { edit.url = link.trimmed }
+        planner.saveEdit(edit, for: shown)
     }
 }
 
@@ -394,6 +675,8 @@ struct SchoolSetupView: View {
             aiCard
             classroomCard
             campusCard
+            quarterCard
+            listCard
             extraPagesCard
             syncingCard
             if !planner.lastPayload.isEmpty {
@@ -411,6 +694,14 @@ struct SchoolSetupView: View {
         .onChange(of: planner.settings.provider) { _ in
             keyText = ""
             keyMessage = ""
+        }
+        .onChange(of: planner.settings.quarterManual) { on in
+            // Start from the dates Infinite Campus reported (or the next ten weeks).
+            guard on else { return }
+            if planner.settings.quarterStart == nil { planner.settings.quarterStart = planner.quarter?.start ?? Date() }
+            if planner.settings.quarterEnd == nil {
+                planner.settings.quarterEnd = planner.quarter?.end ?? Date().addingTimeInterval(70 * 86400)
+            }
         }
         .onChange(of: planner.settings.rememberCampusLogin) { on in
             if !on {
@@ -604,6 +895,73 @@ struct SchoolSetupView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var quarterCard: some View {
+        Card(title: "This Quarter", icon: "calendar") {
+            Toggle("Only show work due this quarter", isOn: $planner.settings.onlyThisQuarter)
+            if let term = planner.saved.term, let start = SchoolDates.day(term.start), let end = SchoolDates.day(term.end) {
+                Text("Infinite Campus says the current grading period is \(term.name): \(SchoolDates.monthDay(start)) – \(SchoolDates.monthDay(end)).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("The quarter's dates come from Infinite Campus when it syncs. Without Infinite Campus, set them yourself below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Toggle("Use my own dates", isOn: $planner.settings.quarterManual)
+                .disabled(!planner.settings.onlyThisQuarter)
+            if planner.settings.quarterManual {
+                HStack {
+                    DatePicker("From", selection: quarterBinding(\.quarterStart, fallback: planner.quarter?.start ?? Date()),
+                               displayedComponents: [.date])
+                    DatePicker("to", selection: quarterBinding(\.quarterEnd, fallback: planner.quarter?.end ?? Date().addingTimeInterval(70 * 86400)),
+                               displayedComponents: [.date])
+                }
+                .frame(maxWidth: 420)
+                .disabled(!planner.settings.onlyThisQuarter)
+            }
+        }
+    }
+
+    /// A date binding for an optional quarter date in the settings, filled in with `fallback` until it's set.
+    private func quarterBinding(_ path: WritableKeyPath<SchoolSettings, Date?>, fallback: Date) -> Binding<Date> {
+        Binding(
+            get: { planner.settings[keyPath: path] ?? fallback },
+            set: { planner.settings[keyPath: path] = $0 }
+        )
+    }
+
+    private var listCard: some View {
+        Card(title: "List", icon: "list.bullet.rectangle") {
+            Toggle("Compact rows", isOn: $planner.settings.compactRows)
+            HStack {
+                Toggle("Remind me about work due tomorrow every evening at", isOn: $planner.settings.dailyReminder)
+                Picker("", selection: $planner.settings.reminderHour) {
+                    ForEach(15..<23, id: \.self) { hour in
+                        Text(Self.hourName(hour)).tag(hour)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 100)
+                .disabled(!planner.settings.dailyReminder)
+            }
+            HStack {
+                Button("Show \(planner.hiddenCount) Hidden Item\(planner.hiddenCount == 1 ? "" : "s")") { planner.unhideAll() }
+                    .disabled(planner.hiddenCount == 0)
+                Text("Right-click an item to hide it, edit it, or check it off. Colors and Light or Dark mode are under Themes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private static func hourName(_ hour: Int) -> String {
+        let date = Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: Date()) ?? Date()
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter.string(from: date)
     }
 
     private var extraPagesCard: some View {

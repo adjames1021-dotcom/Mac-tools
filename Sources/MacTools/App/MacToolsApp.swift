@@ -11,6 +11,7 @@ struct MacToolsApp: App {
         WindowGroup("MacTools", id: "main") {
             ContentView()
                 .environmentObject(appState)
+                .themedRoot()
                 .frame(minWidth: 1080, minHeight: 680)
         }
         .commands {
@@ -27,9 +28,11 @@ struct MacToolsApp: App {
             }
         }
 
-        MenuBarExtra("MacTools", systemImage: "wrench.and.screwdriver", isInserted: $showMenuBarIcon) {
+        MenuBarExtra(isInserted: $showMenuBarIcon) {
             MenuBarContent()
                 .environmentObject(appState)
+        } label: {
+            MenuBarLabel()
         }
     }
 }
@@ -43,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TaskScheduler.shared.start()
         WindowManager.shared.startTracking()
         UpdateManager.shared.start()
+        ThemeManager.shared.start()
         SchoolPlanner.shared.start()
     }
 
@@ -127,6 +131,15 @@ struct MenuBarContent: View {
                 Button("Unlock Keyboard") { lock.unlock() }
             }
             Button("Stop All Automation") { Automation.stopAll() }
+        }
+        Divider()
+        Menu("Spotify") {
+            Button("Play / Pause") { SpotifyPlayer.shared.control(.playPause) }
+            Button("Next") { SpotifyPlayer.shared.control(.next) }
+            Button("Previous") { SpotifyPlayer.shared.control(.previous) }
+            Divider()
+            Button("Christmas Music") { SpotifyPlayer.shared.show(search: "Christmas") }
+            Button("Open Spotify Player") { show(.spotify) }
         }
         Divider()
         Menu("Tools") {

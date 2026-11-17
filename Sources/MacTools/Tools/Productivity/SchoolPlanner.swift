@@ -31,6 +31,8 @@ enum SchoolSource: String, Codable, CaseIterable {
     case campus = "Infinite Campus"
     case both = "Both"
     case other = "Other"
+    /// Added by hand in MacTools.
+    case mine = "Added by you"
 
     var shortName: String {
         switch self {
@@ -38,6 +40,7 @@ enum SchoolSource: String, Codable, CaseIterable {
         case .campus: return "Campus"
         case .both: return "Classroom + Campus"
         case .other: return "Web"
+        case .mine: return "Added by you"
         }
     }
 }
@@ -93,6 +96,80 @@ struct SchoolItem: Codable, Hashable, Identifiable {
     var points: String
     var url: String
     var notes: String
+    /// The keys of the item as the school site described it, kept when your edits are shown on top
+    /// (so check-offs and edits stay attached even after you rename it). Also fixed for items you add.
+    var originalKeys: MemoryKeys? = nil
+}
+
+/// The keys an item's check-off, edits and hiding are remembered under.
+struct MemoryKeys: Codable, Hashable {
+    /// The Classroom link to this exact piece of work, when there is one (the most reliable).
+    var link: String?
+    /// Class + title + original due day.
+    var dated: String
+    /// Title + original due day (survives a re-spelled class name).
+    var titleDate: String
+    /// Class + title (survives a moved due date; only trusted when no other item has the same name).
+    var courseTitle: String
+
+    var all: [String] { [link, dated, titleDate, courseTitle].compactMap { $0 } }
+
+    /// Keys for an item you added yourself: fixed, so renaming it doesn't lose its check-off.
+    static func mine(_ id: String) -> MemoryKeys {
+        MemoryKeys(link: nil, dated: "m:" + id, titleDate: "m:" + id, courseTitle: "m:" + id)
+    }
+}
+
+/// Your changes to a synced item. Nil fields keep what the school site says.
+struct SchoolEdit: Codable, Equatable {
+    var title: String?
+    var course: String?
+    var due: String?
+    var impact: GradeImpact?
+    var status: SchoolStatus?
+    var notes: String?
+    var url: String?
+
+    var isEmpty: Bool {
+        title == nil && course == nil && due == nil && impact == nil && status == nil && notes == nil && url == nil
+    }
+
+    func applied(to item: SchoolItem) -> SchoolItem {
+        var out = item
+        if let title = title { out.title = title }
+        if let course = course { out.course = course }
+        if let due = due { out.due = due }
+        if let impact = impact { out.impact = impact }
+        if let status = status { out.status = status }
+        if let notes = notes { out.notes = notes }
+        if let url = url { out.url = url }
+        return out
+    }
+}
+
+/// Everything you changed by hand: edits, hidden items and items you added. Saved in its own file so syncing never touches it.
+struct SchoolChanges: Codable {
+    /// Memory key → your edit.
+    var edits: [String: SchoolEdit] = [:]
+    /// Memory key → when you hid it.
+    var hidden: [String: Date] = [:]
+    var mine: [SchoolItem] = []
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        edits = (try? c.decodeIfPresent([String: SchoolEdit].self, forKey: .edits)) ?? [:]
+        hidden = (try? c.decodeIfPresent([String: Date].self, forKey: .hidden)) ?? [:]
+        mine = (try? c.decodeIfPresent([SchoolItem].self, forKey: .mine)) ?? []
+    }
+}
+
+/// A grading period (e.g. "Q2"), with dates as YYYY-MM-DD.
+struct SchoolTerm: Codable, Equatable {
+    var name: String
+    var start: String
+    var end: String
 }
 
 extension SchoolItem {
@@ -127,11 +204,13 @@ extension SchoolItem {
     var datedKey: String { courseTitleKey + "|" + dueDay }
     var titleDateKey: String { "n:" + Self.normalize(title) + "|" + dueDay }
 
-    /// Every key a check-off is remembered under, so it survives a moved due date,
-    /// a re-spelled class name or a changed link.
-    var memoryKeys: [String] {
-        [itemLinkKey, datedKey, titleDateKey, courseTitleKey].compactMap { $0 }
+    /// The keys check-offs, edits and hiding are remembered under, so they survive a moved due date,
+    /// a re-spelled class name or a changed link – and your own edits.
+    var keys: MemoryKeys {
+        originalKeys ?? MemoryKeys(link: itemLinkKey, dated: datedKey, titleDate: titleDateKey, courseTitle: courseTitleKey)
     }
+
+    var memoryKeys: [String] { keys.all }
 }
 
 enum SchoolDates {
@@ -167,6 +246,29 @@ enum SchoolDates {
         f.setLocalizedDateFormatFromTemplate("EEEMMMd")
         return f
     }()
+
+    private static let monthDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("MMMd")
+        return f
+    }()
+
+    /// The start of a YYYY-MM-DD day.
+    static func day(_ text: String) -> Date? {
+        let t = text.trimmed
+        guard t.count >= 10 else { return nil }
+        return dateOnly.date(from: String(t.prefix(10))).map { Calendar.current.startOfDay(for: $0) }
+    }
+
+    static func dayString(_ date: Date) -> String { dateOnly.string(from: date) }
+
+    /// The stored form of a due date: "YYYY-MM-DDTHH:MM", or "YYYY-MM-DD" without a time.
+    static func format(_ date: Date, withTime includeTime: Bool) -> String {
+        includeTime ? withTime.string(from: date) : dateOnly.string(from: date)
+    }
+
+    /// "Nov 4"
+    static func monthDay(_ date: Date) -> String { monthDayFormatter.string(from: date) }
 
     static func parse(_ text: String) -> Date? {
         let t = text.trimmed
@@ -297,6 +399,15 @@ struct SchoolSettings: Codable, Equatable {
     var showBrowserWhileSyncing = false
     var notifyNewWork = true
     var sortByWeight = true
+    /// Only show work due in the current grading period.
+    var onlyThisQuarter = true
+    /// Use your own quarter dates instead of the ones from Infinite Campus.
+    var quarterManual = false
+    var quarterStart: Date?
+    var quarterEnd: Date?
+    var compactRows = false
+    var dailyReminder = false
+    var reminderHour = 19
 
     var model: String {
         let id = (provider == .claude ? claudeModel : openAIModel).trimmed
@@ -326,6 +437,13 @@ struct SchoolSettings: Codable, Equatable {
         showBrowserWhileSyncing = try c.decodeIfPresent(Bool.self, forKey: .showBrowserWhileSyncing) ?? d.showBrowserWhileSyncing
         notifyNewWork = try c.decodeIfPresent(Bool.self, forKey: .notifyNewWork) ?? d.notifyNewWork
         sortByWeight = try c.decodeIfPresent(Bool.self, forKey: .sortByWeight) ?? d.sortByWeight
+        onlyThisQuarter = try c.decodeIfPresent(Bool.self, forKey: .onlyThisQuarter) ?? d.onlyThisQuarter
+        quarterManual = try c.decodeIfPresent(Bool.self, forKey: .quarterManual) ?? d.quarterManual
+        quarterStart = try? c.decodeIfPresent(Date.self, forKey: .quarterStart)
+        quarterEnd = try? c.decodeIfPresent(Date.self, forKey: .quarterEnd)
+        compactRows = try c.decodeIfPresent(Bool.self, forKey: .compactRows) ?? d.compactRows
+        dailyReminder = try c.decodeIfPresent(Bool.self, forKey: .dailyReminder) ?? d.dailyReminder
+        reminderHour = try c.decodeIfPresent(Int.self, forKey: .reminderHour) ?? d.reminderHour
     }
 }
 
@@ -337,15 +455,18 @@ struct SchoolSaved: Codable {
     var servedBy = ""
     /// Length of the AI's last answer, used to estimate progress next time.
     var answerLength = 0
+    /// The current grading period, as Infinite Campus reported it.
+    var term: SchoolTerm?
 
     init(items: [SchoolItem] = [], lastSync: Date? = nil, warnings: [String] = [], payloadHash: String = "",
-         servedBy: String = "", answerLength: Int = 0) {
+         servedBy: String = "", answerLength: Int = 0, term: SchoolTerm? = nil) {
         self.items = items
         self.lastSync = lastSync
         self.warnings = warnings
         self.payloadHash = payloadHash
         self.servedBy = servedBy
         self.answerLength = answerLength
+        self.term = term
     }
 
     init(from decoder: Decoder) throws {
@@ -356,6 +477,7 @@ struct SchoolSaved: Codable {
         payloadHash = try c.decodeIfPresent(String.self, forKey: .payloadHash) ?? ""
         servedBy = try c.decodeIfPresent(String.self, forKey: .servedBy) ?? ""
         answerLength = try c.decodeIfPresent(Int.self, forKey: .answerLength) ?? 0
+        term = try? c.decodeIfPresent(SchoolTerm.self, forKey: .term)
     }
 }
 
@@ -374,6 +496,7 @@ final class SchoolPlanner: ObservableObject {
     private static let settingsKey = "schoolTodoSettings"
     private static let listFile = "school-todo.json"
     private static let checkedFile = "school-todo-checked.json"
+    private static let changesFile = "school-todo-changes.json"
     private static let campusUserAccount = "school-todo-campus-username"
     private static let campusPasswordAccount = "school-todo-campus-password"
 
@@ -385,6 +508,8 @@ final class SchoolPlanner: ObservableObject {
     }
     /// Check-offs: memory key → when it was checked. Kept in its own file so it survives anything else changing.
     @Published private(set) var checked: [String: Date]
+    /// Your edits, hidden items and added items.
+    @Published private(set) var changes: SchoolChanges
     @Published private(set) var phase: Phase = .idle
     /// 0…1 while syncing, for the progress bar. Eases forward inside each step so it never sits still.
     @Published private(set) var progress: Double = 0
@@ -420,6 +545,7 @@ final class SchoolPlanner: ObservableObject {
         settings = Prefs.load(Self.settingsKey, default: SchoolSettings())
         saved = DataStore.load(SchoolSaved.self, from: Self.listFile) ?? SchoolSaved()
         checked = DataStore.load([String: Date].self, from: Self.checkedFile) ?? [:]
+        changes = DataStore.load(SchoolChanges.self, from: Self.changesFile) ?? SchoolChanges()
         // Remember whether keys exist without touching the keychain at launch.
         for provider in AIProvider.allCases {
             keyStatus[provider] = UserDefaults.standard.bool(forKey: "schoolTodoHasKey.\(provider.rawValue)")
@@ -431,8 +557,12 @@ final class SchoolPlanner: ObservableObject {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             self?.autoSyncIfDue()
+            self?.remindIfDue()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in self?.autoSyncIfDue() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+            self?.autoSyncIfDue()
+            self?.remindIfDue()
+        }
     }
 
     // MARK: Keys and logins
@@ -515,28 +645,84 @@ final class SchoolPlanner: ObservableObject {
         }
     }
 
-    // MARK: Lists
+    // MARK: Quarter
 
-    /// What the item counts as right now: your check-off wins, and unfinished work past its due date is missing.
-    func status(of item: SchoolItem, now: Date = Date()) -> SchoolStatus {
-        if isChecked(item) { return .done }
-        if item.status == .todo, let due = item.dueDate, due < now { return .missing }
-        return item.status
+    /// A grading period with real dates.
+    struct Quarter: Equatable {
+        let name: String
+        let start: Date
+        let end: Date
+
+        var label: String { "\(name) (\(SchoolDates.monthDay(start)) – \(SchoolDates.monthDay(end)))" }
     }
 
-    func isChecked(_ item: SchoolItem) -> Bool {
-        if let key = item.itemLinkKey, checked[key] != nil { return true }
-        if checked[item.datedKey] != nil || checked[item.titleDateKey] != nil { return true }
-        // Course + title alone only counts when it's unambiguous (e.g. not a daily "Warm-up").
-        return checked[item.courseTitleKey] != nil && (titleCounts[item.courseTitleKey] ?? 0) <= 1
+    /// This quarter: your own dates if you set them, otherwise the grading period Infinite Campus reported.
+    var quarter: Quarter? {
+        let cal = Calendar.current
+        if settings.quarterManual, let start = settings.quarterStart, let end = settings.quarterEnd, start <= end {
+            return Quarter(name: "This quarter", start: cal.startOfDay(for: start),
+                           end: cal.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end)
+        }
+        guard let term = saved.term, let start = SchoolDates.day(term.start), let endDay = SchoolDates.day(term.end) else { return nil }
+        return Quarter(name: term.name, start: start, end: cal.date(bySettingHour: 23, minute: 59, second: 59, of: endDay) ?? endDay)
+    }
+
+    /// The quarter the lists are limited to, when "only this quarter" is on.
+    var activeQuarter: Quarter? { settings.onlyThisQuarter ? quarter : nil }
+
+    // MARK: Lists
+
+    /// Everything there is: synced items with your edits on top, plus the items you added.
+    var allItems: [SchoolItem] {
+        saved.items.map { (item: SchoolItem) -> SchoolItem in
+            var shown = edit(for: item)?.applied(to: item) ?? item
+            shown.originalKeys = item.keys
+            return shown
+        } + changes.mine
+    }
+
+    /// Finds what's remembered for an item (a check-off, edit or hide) under any of its keys.
+    private func lookup<Value>(_ store: [String: Value], _ item: SchoolItem) -> Value? {
+        let keys = item.keys
+        if let link = keys.link, let value = store[link] { return value }
+        if let value = store[keys.dated] ?? store[keys.titleDate] { return value }
+        // Class + title alone only counts when it's unambiguous (e.g. not a daily "Warm-up").
+        if (titleCounts[keys.courseTitle] ?? 0) <= 1, let value = store[keys.courseTitle] { return value }
+        return nil
+    }
+
+    func edit(for item: SchoolItem) -> SchoolEdit? { item.source == .mine ? nil : lookup(changes.edits, item) }
+    func isEdited(_ item: SchoolItem) -> Bool { edit(for: item) != nil }
+    func isChecked(_ item: SchoolItem) -> Bool { lookup(checked, item) != nil }
+    func isHidden(_ item: SchoolItem) -> Bool { lookup(changes.hidden, item) != nil }
+
+    /// What the item counts as right now: your check-off wins, then a list you picked by hand,
+    /// and otherwise unfinished work past its due date is missing.
+    func status(of item: SchoolItem, now: Date = Date()) -> SchoolStatus {
+        if isChecked(item) { return .done }
+        if edit(for: item)?.status != nil { return item.status }
+        if item.status == .todo, let due = item.dueDate, due < now { return .missing }
+        return item.status
     }
 
     /// True when the student checked it off but the school site doesn't show it as done (yet).
     func checkedOnlyByYou(_ item: SchoolItem) -> Bool { item.status != .done && isChecked(item) }
 
-    func items(_ status: SchoolStatus) -> [SchoolItem] {
+    /// Not hidden, and due this quarter (when that's on). Work with no due date and your own items always show.
+    private func isShown(_ item: SchoolItem) -> Bool {
+        if isHidden(item) { return false }
+        guard let quarter = activeQuarter, item.source != .mine, let due = item.dueDate else { return true }
+        return due >= quarter.start && due <= quarter.end
+    }
+
+    func items(_ status: SchoolStatus, matching search: String = "") -> [SchoolItem] {
         let now = Date()
-        let list = saved.items.filter { self.status(of: $0, now: now) == status }
+        let query = search.trimmed
+        let list = allItems.filter { item in
+            guard isShown(item), self.status(of: item, now: now) == status else { return false }
+            return query.isEmpty || item.title.localizedCaseInsensitiveContains(query)
+                || item.course.localizedCaseInsensitiveContains(query) || item.notes.localizedCaseInsensitiveContains(query)
+        }
         let far = Date.distantFuture
         switch status {
         case .done:
@@ -552,9 +738,20 @@ final class SchoolPlanner: ObservableObject {
         }
     }
 
-    func count(_ status: SchoolStatus) -> Int {
-        let now = Date()
-        return saved.items.filter { self.status(of: $0, now: now) == status }.count
+    func count(_ status: SchoolStatus) -> Int { items(status).count }
+
+    var hiddenCount: Int { allItems.filter { isHidden($0) }.count }
+
+    /// Items left out because they're due outside this quarter.
+    var outsideQuarterCount: Int {
+        guard activeQuarter != nil else { return 0 }
+        return allItems.filter { !isHidden($0) && !isShown($0) }.count
+    }
+
+    /// Class names in use, for the editor's class menu.
+    var courseNames: [String] {
+        Array(Set(allItems.map { $0.course.trimmed }.filter { !$0.isEmpty }))
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     func toggleChecked(_ item: SchoolItem) {
@@ -573,6 +770,81 @@ final class SchoolPlanner: ObservableObject {
     func clearCheckOffs() {
         checked = [:]
         DataStore.save(checked, to: Self.checkedFile)
+    }
+
+    // MARK: Your changes
+
+    /// The item as the school site describes it, without your edits.
+    func schoolVersion(of item: SchoolItem) -> SchoolItem? {
+        saved.items.first { $0.id == item.id }
+    }
+
+    /// Saves your changes to a synced item (an empty edit removes them).
+    func saveEdit(_ edit: SchoolEdit, for item: SchoolItem) {
+        for key in item.memoryKeys {
+            if edit.isEmpty { changes.edits.removeValue(forKey: key) } else { changes.edits[key] = edit }
+        }
+        saveChanges()
+    }
+
+    func undoEdits(_ item: SchoolItem) { saveEdit(SchoolEdit(), for: item) }
+
+    /// Adds or updates an item you made yourself.
+    func saveMine(_ item: SchoolItem) {
+        var item = item
+        item.source = .mine
+        if item.originalKeys == nil { item.originalKeys = .mine(item.id) }
+        if let index = changes.mine.firstIndex(where: { $0.id == item.id }) {
+            changes.mine[index] = item
+        } else {
+            changes.mine.append(item)
+        }
+        saveChanges()
+    }
+
+    func deleteMine(_ item: SchoolItem) {
+        changes.mine.removeAll { $0.id == item.id }
+        for key in item.memoryKeys { checked.removeValue(forKey: key) }
+        DataStore.save(checked, to: Self.checkedFile)
+        saveChanges()
+    }
+
+    func hide(_ item: SchoolItem) {
+        let now = Date()
+        for key in item.memoryKeys { changes.hidden[key] = now }
+        saveChanges()
+    }
+
+    func unhideAll() {
+        changes.hidden = [:]
+        saveChanges()
+    }
+
+    private func saveChanges() {
+        DataStore.save(changes, to: Self.changesFile)
+    }
+
+    // MARK: Reminders
+
+    /// Once a day after the chosen hour: a notification about work due tomorrow and anything missing.
+    private func remindIfDue() {
+        guard settings.dailyReminder else { return }
+        let cal = Calendar.current
+        let now = Date()
+        guard cal.component(.hour, from: now) >= settings.reminderHour else { return }
+        let today = SchoolDates.dayString(now)
+        guard UserDefaults.standard.string(forKey: "schoolTodoLastReminder") != today else { return }
+        UserDefaults.standard.set(today, forKey: "schoolTodoLastReminder")
+        let tomorrow = items(.todo).filter { $0.dueDate.map { cal.isDateInTomorrow($0) } ?? false }
+        let missing = count(.missing)
+        guard !tomorrow.isEmpty || missing > 0 else { return }
+        var parts: [String] = []
+        if !tomorrow.isEmpty {
+            let names = tomorrow.prefix(3).map { $0.course.isEmpty ? $0.title : "\($0.title) (\($0.course))" }.joined(separator: ", ")
+            parts.append("Due tomorrow: " + names + (tomorrow.count > 3 ? " and \(tomorrow.count - 3) more" : ""))
+        }
+        if missing > 0 { parts.append("\(missing) missing") }
+        Shell.notify(title: "School To-Do", parts.joined(separator: " · "))
     }
 
     /// The list as a Markdown checklist, for pasting into notes.
@@ -794,7 +1066,17 @@ final class SchoolPlanner: ObservableObject {
 
         let courses = Array(Set(saved.items.map(\.course).filter { !$0.isEmpty })).sorted()
         let payload = SchoolPrompt.render(report.pages)
-        let system = SchoolPrompt.system(lookbackDays: settings.doneLookbackDays, knownCourses: courses)
+        // The grading period to stick to: your own dates, or the one Infinite Campus just reported.
+        var promptQuarter: Quarter?
+        if settings.onlyThisQuarter {
+            if let term = report.term, !settings.quarterManual, let start = SchoolDates.day(term.start), let end = SchoolDates.day(term.end) {
+                promptQuarter = Quarter(name: term.name, start: start, end: end)
+            } else {
+                promptQuarter = quarter
+            }
+        }
+        let system = SchoolPrompt.system(lookbackDays: settings.doneLookbackDays, knownCourses: courses,
+                                         quarter: promptQuarter.map { (name: $0.name, start: $0.start, end: $0.end) })
         lastPayload = payload
         let day = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
         let hash = SHA256.hash(data: Data((payload + system + settings.model + day).utf8))
@@ -802,6 +1084,7 @@ final class SchoolPlanner: ObservableObject {
         if !force && hash == saved.payloadHash && !saved.items.isEmpty {
             saved.lastSync = Date()
             saved.warnings = report.warnings
+            if let term = report.term { saved.term = term }
             persist()
             phase = .idle
             endProgress(success: true)
@@ -875,11 +1158,13 @@ final class SchoolPlanner: ObservableObject {
             warnings: report.warnings + output.warnings,
             payloadHash: hash,
             servedBy: output.servedBy,
-            answerLength: output.characters
+            answerLength: output.characters,
+            term: report.term ?? saved.term
         )
         persist()
         phase = .idle
         endProgress(success: true)
+        Jingle.shared.playIfOn(Jingle.chorus)
         notice = "Synced \(items.count) item\(items.count == 1 ? "" : "s")."
         if settings.notifyNewWork && !oldIDs.isEmpty && !fresh.isEmpty {
             let message = fresh.count == 1
