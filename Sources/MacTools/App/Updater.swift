@@ -9,6 +9,8 @@ struct BuildInfo {
     let repo: String
     let branch: String
     let buildDate: Date?
+    /// The MacTools version number from VERSION, e.g. "2.2".
+    let version: String
 
     static let defaultRepo = "adjames1021-dotcom/Mac-tools"
 
@@ -21,10 +23,43 @@ struct BuildInfo {
                          commit: value("MTCommit"),
                          repo: repo.isEmpty ? defaultRepo : repo,
                          branch: value("MTBranch"),
-                         buildDate: ISO8601DateFormatter().date(from: value("MTBuildDate")))
+                         buildDate: ISO8601DateFormatter().date(from: value("MTBuildDate")),
+                         version: value("MTVersion"))
     }
 
     var shortCommit: String { commit.isEmpty ? "unknown" : String(commit.prefix(7)) }
+    var displayVersion: String { version.isEmpty ? "unknown" : version }
+}
+
+/// MacTools version numbers: +0.1 for a small update (2.2 → 2.3, 2.9 → 2.10),
+/// the next whole number for a full one (2.7 → 3.0). See Scripts/bump-version.sh.
+struct AppVersion: Comparable, CustomStringConvertible {
+    let major: Int
+    let minor: Int
+
+    init(major: Int, minor: Int) {
+        self.major = major
+        self.minor = minor
+    }
+
+    init?(_ text: String) {
+        let parts = text.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...2).contains(parts.count), let major = Int(parts[0]), major >= 0 else { return nil }
+        var minor = 0
+        if parts.count == 2 {
+            guard let value = Int(parts[1]), value >= 0 else { return nil }
+            minor = value
+        }
+        self.init(major: major, minor: minor)
+    }
+
+    var description: String { "\(major).\(minor)" }
+    var nextSmall: AppVersion { AppVersion(major: major, minor: minor + 1) }
+    var nextFull: AppVersion { AppVersion(major: major + 1, minor: 0) }
+
+    static func < (a: AppVersion, b: AppVersion) -> Bool {
+        (a.major, a.minor) < (b.major, b.minor)
+    }
 }
 
 struct RemoteCommit: Identifiable, Equatable {
@@ -71,6 +106,8 @@ final class UpdateManager: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var latest: RemoteCommit?
+    /// The version number of `latest`, read from its VERSION file on GitHub.
+    @Published private(set) var latestVersion: String?
     @Published private(set) var newCommits: [RemoteCommit] = []
     @Published private(set) var log = ""
     @Published private(set) var step = ""
@@ -191,6 +228,7 @@ final class UpdateManager: ObservableObject {
             return
         }
         latest = newest
+        fetchVersion(sha: newest.sha)
         if newest.sha == currentCommit {
             newCommits = []
             phase = installedCommit == nil ? .upToDate : .ready
@@ -210,6 +248,25 @@ final class UpdateManager: ObservableObject {
                 Shell.notify("A MacTools update is available. Open MacTools ▸ Updates to install it.")
             }
         }
+    }
+
+    /// Reads the VERSION file of a commit so the update can be shown as "2.3" rather than a commit id.
+    private func fetchVersion(sha: String) {
+        latestVersion = nil
+        let parts = repo.trimmed.split(separator: "/")
+        guard parts.count == 2,
+              let url = URL(string: "https://raw.githubusercontent.com/\(parts[0])/\(parts[1])/\(sha)/VERSION") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue("MacTools-Updater", forHTTPHeaderField: "User-Agent")
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let text = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
+            DispatchQueue.main.async {
+                guard let self = self, self.latest?.sha == sha else { return }
+                self.latestVersion = status == 200 ? AppVersion(text)?.description : nil
+            }
+        }.resume()
     }
 
     // MARK: Installing
@@ -404,7 +461,8 @@ struct UpdatesView: View {
     var body: some View {
         ToolPage(tool: .updates) {
             Card(title: "This Version", icon: "shippingbox") {
-                InfoRow(label: "Version", value: updater.build.shortCommit)
+                InfoRow(label: "Version", value: updater.build.displayVersion)
+                InfoRow(label: "Commit", value: updater.build.shortCommit)
                 if let date = updater.build.buildDate {
                     InfoRow(label: "Built", value: date.formatted(date: .abbreviated, time: .shortened), copyable: false)
                 }
@@ -467,10 +525,13 @@ struct UpdatesView: View {
                 Text("Updates are downloaded from GitHub and built on this Mac with the Command Line Tools, then MacTools swaps itself in place. Your settings, macros and permissions are kept.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("Version numbers go up by 0.1 for each small update (2.2 → 2.3) and to the next whole number for a full update (2.x → 3.0).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if !updater.newCommits.isEmpty {
-                Card(title: "What's New (\(updater.newCommits.count))", icon: "sparkles") {
+                Card(title: updater.latestVersion.map { "What's New in \($0)" } ?? "What's New (\(updater.newCommits.count))", icon: "sparkles") {
                     ForEach(updater.newCommits.prefix(40)) { commit in
                         HStack(alignment: .firstTextBaseline) {
                             Text("•")
@@ -522,10 +583,12 @@ struct UpdatesView: View {
         switch updater.phase {
         case .idle: return "Not checked yet"
         case .checking: return "Checking for updates…"
-        case .upToDate: return "MacTools is up to date"
-        case .available: return "An update is available" + (updater.latest.map { " (\(String($0.sha.prefix(7))))" } ?? "")
-        case .installing: return "Installing update…"
-        case .ready: return "Update installed – restart to finish"
+        case .upToDate: return updater.build.version.isEmpty ? "MacTools is up to date" : "MacTools \(updater.build.version) is up to date"
+        case .available:
+            if let version = updater.latestVersion { return "MacTools \(version) is available" }
+            return "An update is available" + (updater.latest.map { " (\(String($0.sha.prefix(7))))" } ?? "")
+        case .installing: return updater.latestVersion.map { "Installing MacTools \($0)…" } ?? "Installing update…"
+        case .ready: return updater.latestVersion.map { "MacTools \($0) installed – restart to finish" } ?? "Update installed – restart to finish"
         case .failed(let message): return message
         }
     }

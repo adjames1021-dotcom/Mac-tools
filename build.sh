@@ -138,7 +138,7 @@ if [[ ${#SOURCES[@]} -eq 0 ]]; then
   exit 1
 fi
 
-HASH="$( { cat "${SOURCES[@]}" Resources/Info.plist Scripts/make_icon.swift build.sh; uname -m; "$SWIFTC" --version 2>&1; } | shasum -a 256 | cut -d' ' -f1)"
+HASH="$( { cat "${SOURCES[@]}" Resources/Info.plist Scripts/make_icon.swift build.sh; cat VERSION 2>/dev/null || true; uname -m; "$SWIFTC" --version 2>&1; } | shasum -a 256 | cut -d' ' -f1)"
 
 if [[ $FORCE -eq 0 && -x "$APP/Contents/MacOS/$APP_NAME" && -f "$STAMP" && "$(cat "$STAMP")" == "$HASH" ]]; then
   echo "✅ MacTools is up to date."
@@ -154,6 +154,9 @@ OLD_REQ="$(requirement_of "$TARGET")"
 REPO="$(grep -E '^REPO=' update.conf 2>/dev/null | head -1 | cut -d= -f2- || true)"
 BRANCH="$(grep -E '^BRANCH=' update.conf 2>/dev/null | head -1 | cut -d= -f2- || true)"
 COMMIT="${MACTOOLS_COMMIT:-}"
+# The version number in VERSION: +0.1 for a small update, the next whole number for a full one.
+VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || true)"
+[[ -n "$VERSION" ]] || VERSION="0.0"
 SOURCE_KIND="folder"
 if [[ -d "$ROOT/.git" ]] && command -v git >/dev/null 2>&1; then
   SOURCE_KIND="git"
@@ -164,7 +167,7 @@ fi
 ARCH="$(uname -m)"
 mkdir -p "$BUILD_DIR"
 TMP_BIN="$BUILD_DIR/$APP_NAME.bin"
-echo "🔨 Building MacTools for $ARCH (${#SOURCES[@]} files). This takes a minute or two…"
+echo "🔨 Building MacTools $VERSION for $ARCH (${#SOURCES[@]} files). This takes a minute or two…"
 "$SWIFTC" -O -swift-version 5 -parse-as-library \
   -sdk "$SDK" -target "$ARCH-apple-macos$MIN_MACOS" \
   -module-name "$APP_NAME" \
@@ -186,6 +189,8 @@ plutil -replace MTCommit -string "$COMMIT" "$PLIST"
 plutil -replace MTRepo -string "$REPO" "$PLIST"
 plutil -replace MTBranch -string "$BRANCH" "$PLIST"
 plutil -replace MTBuildDate -string "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PLIST"
+plutil -replace MTVersion -string "$VERSION" "$PLIST"
+plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
 
 # App icon (optional – the build still succeeds if this step fails)
 make_icon() {

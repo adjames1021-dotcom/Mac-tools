@@ -16,6 +16,8 @@ One native macOS app with 60 tools: a keyboard & mouse **macro recorder/player**
 
 Once MacTools is installed, you never have to rebuild it by hand. The **Updates** page (and the menu bar's **Check for Updates…**) checks GitHub, downloads the new version, builds it in the background and swaps it in – just click **Restart MacTools**. You can also turn on *Install updates automatically*. Use **Move to Applications Folder** on that page so MacTools lives in Launchpad and Spotlight like any other app.
 
+Each release has a version number, shown on the Updates page ("MacTools 2.3 is available"). Numbering started at **2.2**: a small update adds 0.1 (2.2 → 2.3, and 2.9 → 2.10), and a full update moves to the next whole number (2.x → 3.0). The number lives in the `VERSION` file; `./Scripts/bump-version.sh small` or `full` bumps it.
+
 Builds are signed with a local certificate (“MacTools Local Code Signing”, created in your login keychain on the first build), so macOS **keeps your permissions** across updates. The first time, macOS may ask whether `codesign` can use that key – click **Always Allow**. You can delete the certificate in Keychain Access at any time; builds then fall back to a basic signature.
 
 Prefer the command line?
@@ -133,8 +135,8 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **Code Snippets**: a searchable library of reusable code with languages.
 - **.gitignore Generator**: combine templates for 17 languages, editors and OSes and save into a project.
 - **Hex Viewer**: byte-by-byte view of any file plus real file-type detection.
-- **Element Inspector**: a DevTools-style inspector for a tab in your own Chrome-family browser, using Chrome's built-in remote debugging (the same `--remote-debugging-port` protocol Playwright and VS Code use). Launch the browser with debugging (or point it at a tab that already has it), then browse the live DOM tree, pick an element straight from the page, edit its attributes and outer HTML, read its computed styles, watch the console, and run JavaScript in the page. Everything can **pop out into a floating window** that stays on top of other apps. An **AI panel** (reusing the API key you saved for School To-Do, from the Keychain) can explain the selected element or suggest an edit you apply with one click. A **Godot** tab detects a Godot web export in the tab and lists its engine methods and exported functions. Recent Chrome only exposes debugging on a separate profile, so there's a toggle for that which keeps your everyday browsing untouched.
-- **Godot Pack Inspector**: open a Godot game's `.pck` file – or a game `.app`/executable with the pack embedded – and browse every file inside it. It reads the GDPC directory (formats v1 and v2, standalone and embedded), lists all assets, shows text files and resources, exports any file, and pulls the **`func` definitions out of the GDScript**, either per-file or as one list across the whole game. Scripts can be explained by AI too. Encrypted packs are flagged and skipped.
+- **Element Inspector**: a DevTools-style inspector for a tab in your own Chrome-family browser, using Chrome's built-in remote debugging (the same `--remote-debugging-port` protocol Playwright and VS Code use). Launch the browser with debugging (or point it at a tab that already has it), then browse the live DOM tree, pick an element straight from the page, edit its attributes and outer HTML, read its computed styles, watch the console, and run JavaScript in the page. Everything can **pop out into a floating window** that stays on top of other apps. The **AI Assistant** button opens a panel where **Claude or ChatGPT** explains the selected element or suggests an edit you apply with one click – add either API key right there (it's saved in the Keychain and shared with School To-Do). A **Godot** tab detects a Godot 3 or 4 web export, lists its engine methods and exported functions, and shows the address of the game's `.pck` so you can download it and open it in Godot Pack Inspector. Recent Chrome only exposes debugging on a separate profile, so there's a toggle for that which keeps your everyday browsing untouched.
+- **Godot Pack Inspector**: open a Godot game's `.pck` file – or a game `.app`/executable with the pack embedded – and browse every file inside it. It reads every pack format from Godot 3 to Godot 4.5+ (v1–v4, standalone, embedded at the end of an executable or in its pack section), lists all assets, shows text files and resources, exports any file, and pulls the **functions out of the game's scripts** – `class_name`, `extends`, signals and every `func` with its parameters – per file or as one list across the whole game. That includes the compiled `.gdc` scripts Godot 4.3+ exports by default (compressed ones need `zstd`: `brew install zstd`); for Godot 3 compiled scripts it lists the names they use. Scripts can be explained by Claude or ChatGPT. Encrypted packs and files are flagged rather than misread.
 - **Encrypt & Decrypt**: password-protect text or files with AES-256-GCM.
 - **Key Code Viewer**: press keys to see their key codes, characters and modifiers.
 - **Developer Cleaner**: measure and clear Xcode DerivedData, archives, simulator caches, npm/Yarn/pnpm/pip/Gradle/Maven/Go/Cargo/Homebrew caches, and find old `node_modules` folders.
@@ -192,8 +194,10 @@ School To-Do keeps its list in `school-todo.json`, your check-offs in `school-to
 Launch MacTools.command   double-click launcher (builds, opens the app, closes Terminal)
 build.sh                  compiles Sources/ into build/MacTools.app with swiftc
 update.conf               which GitHub repository/branch the in-app updater follows
+VERSION                   the version number (2.2, 2.3 …) shown in the app
 Resources/Info.plist      app bundle metadata
 Scripts/make_icon.swift   draws the app icon during the build
+Scripts/bump-version.sh   bumps VERSION: small (+0.1) or full (next whole number)
 Sources/MacTools/
   App/                    app entry point, sidebar, tool registry, settings
   Core/                   permissions, hotkeys, input synthesis, shell, shared UI

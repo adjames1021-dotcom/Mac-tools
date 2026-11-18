@@ -182,6 +182,8 @@ final class CDPConnection: NSObject {
         config.connectionProxyDictionary = [:]
         session = URLSession(configuration: config)
         task = session.webSocketTask(with: webSocketURL)
+        // Whole-document snapshots of big pages are far larger than the 1 MB default.
+        task.maximumMessageSize = 256 * 1024 * 1024
         super.init()
     }
 
@@ -440,7 +442,9 @@ final class InspectorSession: ObservableObject {
     @Published var root: DOMNode?
     @Published var selectedNode: DOMNode?
     @Published var outerHTML = ""
-    @Published var outerHTMLDirty = false
+    /// The HTML as last read from the page; edits are "dirty" until applied.
+    @Published var loadedOuterHTML = ""
+    var outerHTMLDirty: Bool { outerHTML != loadedOuterHTML }
     @Published var computedStyles: [(name: String, value: String)] = []
     @Published var styleFilter = ""
 
@@ -455,12 +459,12 @@ final class InspectorSession: ObservableObject {
     @Published var godotReport = ""
 
     // AI
-    @Published var aiProvider: AIProvider = .claude
+    @Published var aiProvider: AIProvider = InspectorAI.defaultProvider
     @Published var aiOutput = ""
     @Published var aiBusy = false
     @Published var aiSuggestedHTML = ""
 
-    var aiModel: String { aiProvider == .claude ? SchoolModels.claudeDefault : SchoolModels.openAIDefault }
+    var aiModel: String { InspectorAI.model(for: aiProvider) }
 
     /// Asks the model to explain or edit the selected element, given the live HTML and recent console output.
     func askAI(editMode: Bool) {
@@ -480,7 +484,7 @@ final class InspectorSession: ObservableObject {
         aiBusy = true
         aiOutput = ""
         aiSuggestedHTML = ""
-        InspectorAI.ask(provider: aiProvider, model: aiModel, system: system, user: user) { [weak self] result in
+        InspectorAI.ask(provider: aiProvider, system: system, user: user) { [weak self] result in
             guard let self = self else { return }
             self.aiBusy = false
             switch result {
@@ -632,17 +636,24 @@ final class InspectorSession: ObservableObject {
 
     func select(_ node: DOMNode) {
         selectedNode = node
-        outerHTMLDirty = false
         aiSuggestedHTML = ""
+        // Don't leave the previous element's HTML in the editor while this one loads.
+        outerHTML = ""
+        loadedOuterHTML = ""
         guard let connection = connection else { return }
+        // Replies can arrive after the user has clicked another element; ignore stale ones.
         connection.send("DOM.getOuterHTML", ["nodeId": node.nodeId]) { [weak self] result in
-            if case .success(let value) = result { self?.outerHTML = (value["outerHTML"] as? String) ?? "" }
+            guard let self = self, self.selectedNode === node, case .success(let value) = result else { return }
+            let html = (value["outerHTML"] as? String) ?? ""
+            self.outerHTML = html
+            self.loadedOuterHTML = html
         }
         if node.isElement {
             connection.send("CSS.getComputedStyleForNode", ["nodeId": node.nodeId]) { [weak self] result in
+                guard let self = self, self.selectedNode === node else { return }
                 guard case .success(let value) = result,
-                      let styles = value["computedStyle"] as? [[String: Any]] else { self?.computedStyles = []; return }
-                self?.computedStyles = styles.compactMap { entry in
+                      let styles = value["computedStyle"] as? [[String: Any]] else { self.computedStyles = []; return }
+                self.computedStyles = styles.compactMap { entry in
                     guard let name = entry["name"] as? String, let value = entry["value"] as? String else { return nil }
                     return (name, value)
                 }
@@ -671,7 +682,7 @@ final class InspectorSession: ObservableObject {
         connection.send("DOM.setOuterHTML", ["nodeId": node.nodeId, "outerHTML": outerHTML]) { [weak self] result in
             switch result {
             case .success:
-                self?.outerHTMLDirty = false
+                self?.loadedOuterHTML = self?.outerHTML ?? ""
                 self?.status = "Applied the edit to the live page."
                 self?.loadDocument()
             case .failure(let error):
@@ -713,6 +724,7 @@ final class InspectorSession: ObservableObject {
             if case .success = result {
                 self?.selectedNode = nil
                 self?.outerHTML = ""
+                self?.loadedOuterHTML = ""
                 self?.status = "Removed the element from the page."
                 self?.loadDocument()
             }
@@ -722,10 +734,10 @@ final class InspectorSession: ObservableObject {
     private func refreshOuterHTML() {
         guard let node = selectedNode, let connection = connection else { return }
         connection.send("DOM.getOuterHTML", ["nodeId": node.nodeId]) { [weak self] result in
-            if case .success(let value) = result {
-                self?.outerHTML = (value["outerHTML"] as? String) ?? ""
-                self?.outerHTMLDirty = false
-            }
+            guard let self = self, self.selectedNode === node, case .success(let value) = result else { return }
+            let html = (value["outerHTML"] as? String) ?? ""
+            self.outerHTML = html
+            self.loadedOuterHTML = html
         }
     }
 
@@ -786,17 +798,25 @@ final class InspectorSession: ObservableObject {
         (function () {
           var out = { present: false, markers: [], canvases: [], engineFns: [], moduleExports: [], globals: [] };
           try {
-            if (window.Engine) { out.present = true; out.markers.push("window.Engine"); }
-            if (window.Godot) { out.present = true; out.markers.push("window.Godot"); }
-            if (window.GodotConfig) { out.present = true; out.markers.push("window.GodotConfig"); }
-            var mod = window.Module || window.GodotModule;
-            if (mod) { out.markers.push("Module"); }
+            // Godot 4 declares these with const, so they aren't properties of window.
+            var E = (typeof Engine !== "undefined") ? Engine : null;
+            if (E) { out.present = true; out.markers.push("Engine"); }
+            if (typeof Godot !== "undefined") { out.present = true; out.markers.push("Godot"); }
+            var cfg = (typeof GODOT_CONFIG !== "undefined") ? GODOT_CONFIG : null;
+            if (cfg) {
+              out.present = true; out.markers.push("GODOT_CONFIG");
+              var pack = cfg.mainPack || ((cfg.executable || "index") + ".pck");
+              try { out.pack = new URL(pack, location.href).href; } catch (e) { out.pack = String(pack); }
+            }
+            var inst = (typeof engine !== "undefined") ? engine : null;
+            var mod = (inst && inst.rtenv) || window.Module || null;
+            if (mod) { out.markers.push(inst && inst.rtenv ? "engine.rtenv" : "Module"); }
             document.querySelectorAll("canvas").forEach(function (c) {
               out.canvases.push((c.id || "canvas") + " " + c.width + "x" + c.height);
               if (c.id && c.id.toLowerCase().indexOf("godot") >= 0) out.present = true;
             });
-            if (window.Engine && typeof window.Engine === "function") {
-              var proto = window.Engine.prototype || {};
+            if (E && typeof E === "function") {
+              var proto = E.prototype || {};
               Object.getOwnPropertyNames(proto).forEach(function (k) {
                 if (typeof proto[k] === "function") out.engineFns.push(k);
               });
@@ -805,9 +825,11 @@ final class InspectorSession: ObservableObject {
               var count = 0;
               for (var key in mod) {
                 if (count > 400) break;
-                if (typeof mod[key] === "function" && (key[0] === "_" || key.indexOf("godot") >= 0 || key.indexOf("gdscript") >= 0)) {
-                  out.moduleExports.push(key); count++;
-                }
+                try {
+                  if (typeof mod[key] === "function" && (key[0] === "_" || key.indexOf("godot") >= 0 || key.indexOf("gdscript") >= 0)) {
+                    out.moduleExports.push(key); count++;
+                  }
+                } catch (e) {}
               }
             }
             var gl = Object.getOwnPropertyNames(window).filter(function (k) {
@@ -838,6 +860,11 @@ final class InspectorSession: ObservableObject {
         let markers = (report["markers"] as? [String]) ?? []
         lines.append(present ? "✅ This looks like a Godot web export." : "No Godot engine markers found on this page.")
         if !markers.isEmpty { lines.append("Markers: " + markers.joined(separator: ", ")) }
+        if let pack = report["pack"] as? String, !pack.isEmpty {
+            lines.append("")
+            lines.append("Game pack: \(pack)")
+            lines.append("Download that file and open it in Godot Pack Inspector to read the game's scripts and functions.")
+        }
         if let canvases = report["canvases"] as? [String], !canvases.isEmpty {
             lines.append("")
             lines.append("Canvases:")
@@ -931,19 +958,63 @@ final class InspectorSession: ObservableObject {
 
 // MARK: - AI assistant (non-streaming, reuses the School To-Do API keys from the Keychain)
 
+enum InspectorAIError: LocalizedError {
+    case noKey(AIProvider)
+    case badKey(AIProvider)
+    case declined(String)
+    case http(AIProvider, Int, String)
+    case network(String)
+    case unreadable
+
+    var errorDescription: String? {
+        switch self {
+        case .noKey(let p): return "No \(p.shortName) API key is saved yet. Add one above."
+        case .badKey(let p): return "\(p.companyName) didn't accept the API key. Use Change to enter it again."
+        case .declined(let why): return "The model declined to answer" + (why.isEmpty ? "." : ": \(why)")
+        case let .http(p, status, message):
+            switch status {
+            case 429: return "\(p.companyName) is rate-limiting requests (or the account is out of credit). Try again shortly." + (message.isEmpty ? "" : " (\(message))")
+            case 404: return "\(p.companyName) doesn't recognise the model name. Pick another model under School To-Do ▸ Setup." + (message.isEmpty ? "" : " (\(message))")
+            default: return "\(p.companyName) API error \(status)" + (message.isEmpty ? "." : ": \(message)")
+            }
+        case .network(let message): return "Couldn't reach the AI service: \(message)"
+        case .unreadable: return "The AI's answer couldn't be read. Try again."
+        }
+    }
+}
+
+/// The AI helper used by Element Inspector and Godot Pack Inspector. It reuses the Claude and ChatGPT
+/// keys School To-Do keeps in the Keychain (cached there, so views never read the Keychain directly).
 enum InspectorAI {
-    /// True when an API key for this provider is saved in the Keychain.
-    static func hasKey(_ provider: AIProvider) -> Bool {
-        !(Keychain.string(provider.keyAccount)?.isEmpty ?? true)
+    static func hasKey(_ provider: AIProvider) -> Bool { SchoolPlanner.shared.hasKey(provider) }
+
+    /// The provider School To-Do uses, unless only the other one has a key.
+    static var defaultProvider: AIProvider {
+        let chosen = SchoolPlanner.shared.settings.provider
+        if hasKey(chosen) { return chosen }
+        return AIProvider.allCases.first(where: { hasKey($0) }) ?? chosen
     }
 
-    /// Sends a one-shot prompt and returns the model's text answer.
-    static func ask(provider: AIProvider, model: String, system: String, user: String,
+    /// The model chosen under School To-Do ▸ Setup for this provider.
+    static func model(for provider: AIProvider) -> String {
+        let settings = SchoolPlanner.shared.settings
+        let id = (provider == .claude ? settings.claudeModel : settings.openAIModel).trimmed
+        if !id.isEmpty { return id }
+        return provider == .claude ? SchoolModels.claudeDefault : SchoolModels.openAIDefault
+    }
+
+    private static func supportsServerFallback(_ model: String) -> Bool {
+        model.hasPrefix("claude-opus-5") || model.hasPrefix("claude-sonnet-5-5") || model.hasPrefix("claude-fable-5")
+    }
+
+    /// Sends a one-shot prompt and returns the model's text answer on the main thread.
+    static func ask(provider: AIProvider, system: String, user: String,
                     completion: @escaping (Result<String, Error>) -> Void) {
-        guard let key = Keychain.string(provider.keyAccount), !key.isEmpty else {
-            completion(.failure(AIError.http(provider: provider, status: 401, message: "No API key saved", type: "")))
+        guard let key = SchoolPlanner.shared.apiKey(provider), !key.isEmpty else {
+            completion(.failure(InspectorAIError.noKey(provider)))
             return
         }
+        let chosenModel = Self.model(for: provider)
         var request: URLRequest
         var body: [String: Any]
         switch provider {
@@ -952,16 +1023,23 @@ enum InspectorAI {
             request.setValue(key, forHTTPHeaderField: "x-api-key")
             request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
             body = [
-                "model": model,
-                "max_tokens": 4000,
+                "model": chosenModel,
+                // Thinking counts toward max_tokens, so leave room for the answer itself.
+                "max_tokens": 16000,
                 "system": system,
+                "output_config": ["effort": "medium"],
                 "messages": [["role": "user", "content": user]],
             ]
+            if supportsServerFallback(chosenModel) {
+                // If a safety check declines the request, the API retries it on a fallback model by itself.
+                request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+                body["fallbacks"] = "default"
+            }
         case .openAI:
             request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
             body = [
-                "model": model,
+                "model": chosenModel,
                 "messages": [
                     ["role": "system", "content": system],
                     ["role": "user", "content": user],
@@ -970,50 +1048,78 @@ enum InspectorAI {
         }
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.timeoutInterval = 120
+        // Non-streaming: nothing arrives until the whole answer is ready.
+        request.timeoutInterval = 300
         guard let data = try? JSONSerialization.data(withJSONObject: body) else {
-            completion(.failure(AIError.unreadable)); return
+            completion(.failure(InspectorAIError.unreadable)); return
         }
         request.httpBody = data
-
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 120
-        URLSession(configuration: config).dataTask(with: request) { data, response, error in
-            DispatchQueue.main.async {
-                if let error = error { completion(.failure(AIError.network(error.localizedDescription))); return }
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                guard let data = data else { completion(.failure(AIError.unreadable)); return }
-                guard status == 200 else {
-                    let message = Self.errorMessage(data)
-                    completion(.failure(AIError.http(provider: provider, status: status, message: message, type: "")))
-                    return
-                }
-                if let text = Self.extractText(provider: provider, data: data) {
-                    completion(.success(text))
-                } else {
-                    completion(.failure(AIError.unreadable))
-                }
-            }
-        }.resume()
+        send(request, provider: provider, retriesLeft: 1, completion: completion)
     }
 
-    private static func extractText(provider: AIProvider, data: Data) -> String? {
-        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+    private static func send(_ request: URLRequest, provider: AIProvider, retriesLeft: Int,
+                             completion: @escaping (Result<String, Error>) -> Void) {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 300
+        let session = URLSession(configuration: config)
+        session.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let transient = error != nil || [408, 409, 429, 500, 502, 503, 504, 529].contains(status)
+                if transient && retriesLeft > 0 && (error as NSError?)?.code != NSURLErrorCancelled {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        send(request, provider: provider, retriesLeft: retriesLeft - 1, completion: completion)
+                    }
+                    return
+                }
+                if let error = error { completion(.failure(InspectorAIError.network(error.localizedDescription))); return }
+                guard let data = data else { completion(.failure(InspectorAIError.unreadable)); return }
+                guard status == 200 else {
+                    let message = errorMessage(data)
+                    completion(.failure(status == 401 ? InspectorAIError.badKey(provider) : InspectorAIError.http(provider, status, message)))
+                    return
+                }
+                completion(answer(provider: provider, data: data))
+            }
+        }.resume()
+        // Release the session once its one task finishes.
+        session.finishTasksAndInvalidate()
+    }
+
+    /// Reads the answer text, turning refusals and cut-off answers into clear results.
+    static func answer(provider: AIProvider, data: Data) -> Result<String, Error> {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return .failure(InspectorAIError.unreadable)
+        }
+        var text = ""
+        var cutOff = false
         switch provider {
         case .claude:
-            guard let content = object["content"] as? [[String: Any]] else { return nil }
-            let text = content.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined()
-            return text.isEmpty ? nil : text
+            let stop = object["stop_reason"] as? String
+            if stop == "refusal" {
+                let details = object["stop_details"] as? [String: Any]
+                return .failure(InspectorAIError.declined((details?["explanation"] as? String) ?? ""))
+            }
+            let content = (object["content"] as? [[String: Any]]) ?? []
+            text = content.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined()
+            cutOff = stop == "max_tokens"
         case .openAI:
-            guard let choices = object["choices"] as? [[String: Any]],
-                  let message = choices.first?["message"] as? [String: Any] else { return nil }
-            return message["content"] as? String
+            guard let choice = (object["choices"] as? [[String: Any]])?.first,
+                  let message = choice["message"] as? [String: Any] else { return .failure(InspectorAIError.unreadable) }
+            if let refusal = message["refusal"] as? String, !refusal.isEmpty { return .failure(InspectorAIError.declined(refusal)) }
+            text = (message["content"] as? String) ?? ""
+            cutOff = choice["finish_reason"] as? String == "length"
         }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return .failure(InspectorAIError.unreadable) }
+        return .success(cutOff ? text + "\n\n(The answer was cut off because it got too long.)" : text)
     }
 
     private static func errorMessage(_ data: Data) -> String {
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let error = object["error"] as? [String: Any] else { return "" }
+              let error = object["error"] as? [String: Any] else {
+            return String(decoding: data.prefix(200), as: UTF8.self).trimmed
+        }
         return (error["message"] as? String) ?? ""
     }
 
@@ -1181,6 +1287,8 @@ struct ChromeInspectorView: View {
 
 struct InspectorContent: View {
     @ObservedObject var session: InspectorSession
+    // Watched so the AI buttons update as soon as a key is saved.
+    @ObservedObject private var planner = SchoolPlanner.shared
     @State private var rightTab = 0
 
     var body: some View {
@@ -1190,6 +1298,8 @@ struct InspectorContent: View {
                     .foregroundColor(session.picking ? .orange : nil)
                 Button("Reload DOM") { session.loadDocument() }
                 Spacer()
+                Button { rightTab = 2 } label: { Label("AI Assistant", systemImage: "sparkles") }
+                    .help("Ask Claude or ChatGPT about the selected element")
             }
             HSplitView {
                 domTree.frame(minWidth: 220)
@@ -1262,7 +1372,6 @@ struct InspectorContent: View {
                 TextEditor(text: $session.outerHTML)
                     .font(.system(size: 11, design: .monospaced))
                     .frame(minHeight: 90)
-                    .onChange(of: session.outerHTML) { _ in session.outerHTMLDirty = true }
                 HStack {
                     Button("Apply to Page") { session.applyOuterHTML() }
                         .disabled(!session.outerHTMLDirty)
@@ -1311,27 +1420,14 @@ struct InspectorContent: View {
     // AI assistant
     private var aiPane: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Picker("", selection: $session.aiProvider) {
-                    ForEach(AIProvider.allCases) { Text($0.title).tag($0) }
-                }
-                .labelsHidden().frame(width: 180)
-                if !InspectorAI.hasKey(session.aiProvider) {
-                    Label("No key saved", systemImage: "key.slash").font(.caption).foregroundColor(.orange)
-                }
-                Spacer()
-            }
-            if !InspectorAI.hasKey(session.aiProvider) {
-                Text("Save an API key under School To-Do ▸ Setup (the same key is reused here, from the Keychain).")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            AIProviderBar(provider: $session.aiProvider)
             HStack {
                 Button("Explain Element") { session.askAI(editMode: false) }
                 Button("Suggest an Edit") { session.askAI(editMode: true) }
                 if session.aiBusy { ProgressView().controlSize(.small) }
                 Spacer()
             }
-            .disabled(session.selectedNode == nil || !InspectorAI.hasKey(session.aiProvider))
+            .disabled(session.selectedNode == nil || session.aiBusy || !planner.hasKey(session.aiProvider))
             ScrollView {
                 Text(session.aiOutput.isEmpty ? "Ask the model to explain or rewrite the selected element." : session.aiOutput)
                     .font(.system(size: 12))
