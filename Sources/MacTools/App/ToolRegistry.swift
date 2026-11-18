@@ -33,7 +33,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // System
     case systemInfo, processManager, appUninstaller, startupItems, systemToggles
     // Network
-    case networkTools
+    case networkTools, nmap
     // Calculators
     case calculator, unitConverter, baseConverter, timestampConverter
 
@@ -55,7 +55,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
             return .files
         case .systemInfo, .processManager, .appUninstaller, .startupItems, .systemToggles:
             return .system
-        case .networkTools:
+        case .networkTools, .nmap:
             return .network
         case .calculator, .unitConverter, .baseConverter, .timestampConverter:
             return .calculators
@@ -130,6 +130,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .processManager: return "App & Process Manager"
         case .systemToggles: return "System Toggles"
         case .networkTools: return "Network Tools"
+        case .nmap: return "Nmap Scanner"
         case .calculator: return "Calculator"
         case .unitConverter: return "Unit Converter"
         case .baseConverter: return "Number Base Converter"
@@ -205,6 +206,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .processManager: return "list.bullet.rectangle"
         case .systemToggles: return "switch.2"
         case .networkTools: return "network"
+        case .nmap: return "network.badge.shield.half.filled"
         case .calculator: return "plus.forwardslash.minus"
         case .unitConverter: return "ruler"
         case .baseConverter: return "number.square"
@@ -280,6 +282,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .processManager: return "See running apps and processes, quit or force quit them."
         case .systemToggles: return "Hidden files, dark mode, Dock, Finder tweaks and quick actions."
         case .networkTools: return "IP info, ping, DNS, port check, traceroute, speed test…"
+        case .nmap: return "Scan hosts and networks with nmap, with every option explained in plain English."
         case .calculator: return "Scientific expression calculator with history."
         case .unitConverter: return "Convert length, weight, temperature, data and more."
         case .baseConverter: return "Binary, octal, decimal, hex and text bytes."
@@ -355,6 +358,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .processManager: return AnyView(ProcessManagerView())
         case .systemToggles: return AnyView(SystemTogglesView())
         case .networkTools: return AnyView(NetworkToolsView())
+        case .nmap: return AnyView(NmapToolView())
         case .calculator: return AnyView(CalculatorView())
         case .unitConverter: return AnyView(UnitConverterView())
         case .baseConverter: return AnyView(BaseConverterView())

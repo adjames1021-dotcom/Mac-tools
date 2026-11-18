@@ -175,6 +175,7 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **App & Process Manager**: switch to, hide, quit or force quit apps; list processes by CPU or memory and end them.
 - **System Toggles**: Dark Mode, hidden files, file extensions, desktop icons, Dock auto-hide and delay, Wi-Fi, mute, volume and more. Quick actions include lock, sleep, restart Finder/Dock, empty Trash, eject disks, flush DNS, free memory, log out, restart and shut down.
 - **Network Tools**: public and local IPs, ping, traceroute, DNS lookup, port check, whois, HTTP headers, a speed test, interfaces, connections, routes and LAN devices.
+- **Nmap Scanner**: a friendly front-end for [nmap](https://nmap.org), the standard open-source network scanner (it offers to install nmap with Homebrew if you don't have it). Pick what to scan and choose the scan type, ports, service and OS detection, scripts, timing and more from plain-English options; the exact `nmap` command is shown before it runs, and scans that need raw packets ask for your administrator password. A built-in, searchable reference explains every nmap option – targets, host discovery, scan techniques, ports, service/OS detection, NSE scripts, timing, firewall evasion and output – in one simple line each. A reminder on the page: only scan systems you own or are authorised to test.
 
 ### Calculators & converters
 - **Calculator**: a scientific expression calculator with history, degrees/radians, `ans`, hex and binary literals.
