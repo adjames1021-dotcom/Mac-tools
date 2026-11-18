@@ -140,6 +140,15 @@ struct GameStorageItem: Identifiable, Hashable {
     var editable: Bool { kind != "binary" }
 }
 
+/// A number (or numeric text) found in the running game's variables, e.g. `Game.cookies`.
+struct LiveValue: Identifiable, Hashable {
+    let path: [String]
+    var value: String
+    var isString: Bool
+    var id: String { path.joined(separator: "\u{1}") }
+    var label: String { HTMLGameHost.expression(path) }
+}
+
 /// Runs a game in MacTools' own browser and reads and writes its storage directly.
 final class HTMLGameHost: NSObject, ObservableObject {
     static let shared = HTMLGameHost()
@@ -152,6 +161,13 @@ final class HTMLGameHost: NSObject, ObservableObject {
     @Published private(set) var loading = false
     @Published var status = ""
     @Published var reloadAfterSave = true
+    @Published private(set) var liveResults: [LiveValue] = []
+    @Published private(set) var liveCount = 0
+    @Published private(set) var liveStatus = ""
+    @Published private(set) var liveScanning = false
+    @Published private(set) var frozen: Set<String> = []
+    /// Every match of the last search (not just the ones shown), for narrowing down.
+    private var livePaths: [[String]] = []
 
     private(set) lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -397,8 +413,207 @@ final class HTMLGameHost: NSObject, ObservableObject {
         }
     }
 
+    // MARK: Live values
+
+    /// Searches the running game's own variables (everything it put on `window`, followed down into objects and
+    /// arrays) for a number. With `narrow`, only re-checks the previous matches – the way to home in on the one
+    /// variable that holds, say, your cookies.
+    private static let liveScanScript = """
+    const matches = (v) => {
+      let n = v;
+      if (typeof v === 'string') { if (v.length > 40 || v.trim() === '') return false; n = Number(v); }
+      if (typeof n !== 'number' || !isFinite(n)) return false;
+      if (n === target) return true;
+      return close && (Math.floor(n) === Math.floor(target) || Math.abs(n - target) <= Math.max(1, Math.abs(target) * 0.01));
+    };
+    const get = (path) => { let o = window; for (const k of path) { if (o === null || o === undefined) return undefined; try { o = o[k]; } catch (e) { return undefined; } } return o; };
+    const pack = (path) => { const v = get(path); return { path, value: typeof v === 'string' ? v : String(v), isString: typeof v === 'string' }; };
+    if (narrow) {
+      const kept = previous.filter((p) => matches(get(p)));
+      return JSON.stringify({ results: kept.slice(0, maxResults).map(pack), total: kept.length, visited: previous.length, all: kept });
+    }
+    const builtins = new Set();
+    try {
+      const f = document.createElement('iframe');
+      f.style.display = 'none';
+      document.documentElement.appendChild(f);
+      for (const k of Object.getOwnPropertyNames(f.contentWindow)) builtins.add(k);
+      f.remove();
+    } catch (e) {}
+    const skip = new Set(['window', 'self', 'top', 'parent', 'frames', 'globalThis', 'document', 'location', 'navigator']);
+    const isNode = (v) => typeof Node !== 'undefined' && v instanceof Node;
+    const seen = new WeakSet();
+    const queue = [];
+    const found = [];
+    let head = 0, visited = 0;
+    const push = (holder, key, path, depth) => {
+      let d;
+      try { d = Object.getOwnPropertyDescriptor(holder, key); } catch (e) { return; }
+      if (!d || d.get || d.set) return;   // never run getters: they can have side effects
+      const v = d.value;
+      if (typeof v === 'number' || typeof v === 'string') { if (matches(v)) found.push(path); return; }
+      if (v && (typeof v === 'object' || (typeof v === 'function' && depth === 1))) queue.push([v, path, depth]);
+    };
+    for (const key of Object.getOwnPropertyNames(window)) {
+      if (builtins.has(key) || skip.has(key) || key.startsWith('__mt') || key.startsWith('webkit')) continue;
+      push(window, key, [key], 1);
+    }
+    while (head < queue.length && visited < 300000 && found.length < 5000) {
+      const [v, path, depth] = queue[head++];
+      visited++;
+      if (seen.has(v)) continue;
+      seen.add(v);
+      if (depth >= 8 || isNode(v) || v === window || ArrayBuffer.isView(v) || v instanceof ArrayBuffer) continue;
+      let keys;
+      try { keys = Array.isArray(v) ? (v.length > 20000 ? [] : Object.keys(v)) : Object.getOwnPropertyNames(v); } catch (e) { continue; }
+      if (keys.length > 20000) continue;
+      for (const k of keys) {
+        if (typeof v === 'function' && (k === 'prototype' || k === 'length' || k === 'name')) continue;
+        push(v, k, path.concat(k), depth + 1);
+      }
+    }
+    return JSON.stringify({ results: found.slice(0, maxResults).map(pack), total: found.length, visited, all: found });
+    """
+
+    private static let liveSetScript = """
+    let o = window;
+    for (let i = 0; i < path.length - 1; i++) o = o[path[i]];
+    const last = path[path.length - 1];
+    o[last] = isString ? String(value) : Number(value);
+    return String(o[last]);
+    """
+
+    private static let liveFreezeScript = """
+    window.__mtFrozen = window.__mtFrozen || {};
+    if (on) { window.__mtFrozen[id] = { path, value: isString ? String(value) : Number(value) }; }
+    else { delete window.__mtFrozen[id]; }
+    if (!window.__mtFreezeTimer) {
+      window.__mtFreezeTimer = setInterval(() => {
+        for (const k in window.__mtFrozen) {
+          const f = window.__mtFrozen[k];
+          try { let o = window; for (let i = 0; i < f.path.length - 1; i++) o = o[f.path[i]]; o[f.path[f.path.length - 1]] = f.value; } catch (e) {}
+        }
+      }, 100);
+    }
+    return Object.keys(window.__mtFrozen).length;
+    """
+
+    private static let liveReadScript = """
+    const get = (path) => { let o = window; for (const k of path) { if (o === null || o === undefined) return undefined; try { o = o[k]; } catch (e) { return undefined; } } return o; };
+    return JSON.stringify(paths.map((p) => { const v = get(p); return { path: p, value: typeof v === 'string' ? v : String(v), isString: typeof v === 'string' }; }));
+    """
+
+    private struct LiveRow: Decodable {
+        let path: [String]
+        let value: String
+        let isString: Bool
+    }
+
+    private struct LiveScan: Decodable {
+        let results: [LiveRow]
+        let total: Int
+        let visited: Int
+        let all: [[String]]?
+    }
+
+    /// A JavaScript expression for a variable, e.g. `Game.cookies` or `Game.Objects["Cursor"].amount`.
+    static func expression(_ path: [String]) -> String {
+        var out = ""
+        for (index, key) in path.enumerated() {
+            let identifier = key.first.map { $0.isLetter || $0 == "_" || $0 == "$" } == true
+                && key.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }
+            if index > 0 && Int(key) != nil {
+                out += "[\(key)]"
+            } else if identifier {
+                out += index == 0 ? key : "." + key
+            } else {
+                let quoted = (try? JSONSerialization.data(withJSONObject: [key]))
+                    .map { String(String(decoding: $0, as: UTF8.self).dropFirst().dropLast()) } ?? "\"\""
+                out += (index == 0 ? "window" : "") + "[\(quoted)]"
+            }
+        }
+        return out
+    }
+
+    /// A line to paste into Chrome's (or any browser's) DevTools Console to make the same change there.
+    static func consoleLine(_ value: LiveValue, newValue: String) -> String {
+        let literal: String
+        if value.isString {
+            literal = (try? JSONSerialization.data(withJSONObject: [newValue])).map { String(String(decoding: $0, as: UTF8.self).dropFirst().dropLast()) } ?? "\"\""
+        } else {
+            literal = newValue.trimmed
+        }
+        return "\(expression(value.path)) = \(literal);"
+    }
+
+    func liveScan(_ query: String, close: Bool, narrow: Bool) {
+        guard let target = Double(query.trimmed) else {
+            liveStatus = "Type the number you see in the game."
+            return
+        }
+        guard source != nil else { return }
+        liveScanning = true
+        liveStatus = narrow ? "Checking the \(liveCount) earlier matches…" : "Searching the game's variables…"
+        let arguments: [String: Any] = ["target": target, "close": close, "narrow": narrow,
+                                        "previous": narrow ? livePaths : [[String]](), "maxResults": 300]
+        webView.callAsyncJavaScript(Self.liveScanScript, arguments: arguments, in: nil, in: .page) { [weak self] result in
+            guard let self = self else { return }
+            self.liveScanning = false
+            guard case .success(let value) = result, let json = value as? String,
+                  let scan = try? JSONDecoder().decode(LiveScan.self, from: Data(json.utf8)) else {
+                self.liveStatus = "Couldn't search this page. Wait for the game to finish loading and try again."
+                return
+            }
+            self.livePaths = scan.all ?? []
+            self.liveCount = scan.total
+            self.liveResults = scan.results.map { LiveValue(path: $0.path, value: $0.value, isString: $0.isString) }
+            switch scan.total {
+            case 0: self.liveStatus = narrow ? "None of the earlier matches has that value now. Start a New Search." : "Nothing found. Try “Close to”, or the exact number from a stats screen."
+            case 1: self.liveStatus = "Found it – 1 match."
+            default:
+                self.liveStatus = "\(scan.total) matches" + (narrow ? "." : " (checked \(scan.visited) values).")
+                    + " Change the number in the game, type the new one and press Narrow Down."
+            }
+        }
+    }
+
+    func liveSet(_ value: LiveValue, to text: String) {
+        let arguments: [String: Any] = ["path": value.path, "value": value.isString ? text : (Double(text.trimmed) ?? 0), "isString": value.isString]
+        webView.callAsyncJavaScript(Self.liveSetScript, arguments: arguments, in: nil, in: .page) { [weak self] result in
+            guard let self = self else { return }
+            if case .success(let written) = result, let shown = written as? String {
+                self.status = "Set \(value.label) to \(shown). The game saves it itself next time it saves."
+                self.liveRefresh()
+            } else {
+                self.status = "Couldn't set \(value.label)."
+            }
+        }
+    }
+
+    /// Keeps a value pinned (rewritten 10 times a second) until it's unfrozen or the game reloads.
+    func liveFreeze(_ value: LiveValue, on: Bool, text: String) {
+        let arguments: [String: Any] = ["id": value.id, "path": value.path, "on": on, "isString": value.isString,
+                                        "value": value.isString ? text : (Double(text.trimmed) ?? Double(value.value) ?? 0)]
+        webView.callAsyncJavaScript(Self.liveFreezeScript, arguments: arguments, in: nil, in: .page) { [weak self] result in
+            guard let self = self, case .success = result else { return }
+            if on { self.frozen.insert(value.id) } else { self.frozen.remove(value.id) }
+            self.status = on ? "Froze \(value.label) at \(text)." : "Unfroze \(value.label)."
+        }
+    }
+
+    /// Re-reads the shown matches' current values.
+    func liveRefresh() {
+        guard !liveResults.isEmpty else { return }
+        webView.callAsyncJavaScript(Self.liveReadScript, arguments: ["paths": liveResults.map(\.path)], in: nil, in: .page) { [weak self] result in
+            guard let self = self, case .success(let value) = result, let json = value as? String,
+                  let rows = try? JSONDecoder().decode([LiveRow].self, from: Data(json.utf8)) else { return }
+            self.liveResults = rows.map { LiveValue(path: $0.path, value: $0.value, isString: $0.isString) }
+        }
+    }
+
     fileprivate func pageLoaded() {
         loading = false
+        frozen = []   // a reload clears the page's freeze timer
         // Games set up their saves after starting, so read storage a moment later.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.refresh() }
     }
@@ -463,6 +678,17 @@ struct HTMLGameEditorView: View {
     @State private var editing: GameStorageItem?
     @State private var showStorage = true
     @State private var newKey = ""
+    @State private var panel = Panel.live
+    @State private var liveQuery = ""
+    @State private var liveClose = false
+    @State private var liveSelected: LiveValue?
+    @State private var liveNew = ""
+
+    enum Panel: String, CaseIterable, Identifiable {
+        case live = "Live Values"
+        case saves = "Saves & Storage"
+        var id: String { rawValue }
+    }
 
     var body: some View {
         ToolPage(tool: .htmlGames, scrolls: false) {
@@ -570,6 +796,115 @@ struct HTMLGameEditorView: View {
 
     private var storagePanel: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Picker("", selection: $panel) {
+                ForEach(Panel.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            switch panel {
+            case .live: liveView
+            case .saves: savesView
+            }
+        }
+        .padding(12)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
+    }
+
+    // MARK: Live values
+
+    private var liveView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Change a number in a running single-player game – cookies, coins, lives, score. Type the number the game shows right now:")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                TextField("e.g. 1500", text: $liveQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { host.liveScan(liveQuery, close: liveClose, narrow: false) }
+                Toggle("Close to", isOn: $liveClose)
+                    .help("Also match numbers within 1% – for games that show rounded numbers like “1.2 million”")
+            }
+            HStack {
+                Button("New Search") {
+                    liveSelected = nil
+                    host.liveScan(liveQuery, close: liveClose, narrow: false)
+                }
+                .buttonStyle(.borderedProminent)
+                Button("Narrow Down") { host.liveScan(liveQuery, close: liveClose, narrow: true) }
+                    .disabled(host.liveCount == 0)
+                    .help("Keep only the earlier matches that now have this value")
+                if host.liveScanning { ProgressView().controlSize(.small) }
+                Spacer()
+                Button { host.liveRefresh() } label: { Image(systemName: "arrow.clockwise") }
+                    .help("Show the current values")
+                    .disabled(host.liveResults.isEmpty)
+            }
+            .disabled(host.source == nil || Double(liveQuery.trimmed) == nil && !host.liveScanning)
+            if !host.liveStatus.isEmpty {
+                Text(host.liveStatus).font(.caption).foregroundStyle(.secondary)
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(host.liveResults) { value in
+                        Button {
+                            liveSelected = value
+                            liveNew = value.value
+                        } label: {
+                            HStack {
+                                if host.frozen.contains(value.id) {
+                                    Image(systemName: "snowflake").foregroundColor(.blue).font(.caption)
+                                }
+                                Text(value.label).font(.system(.caption, design: .monospaced)).lineLimit(1).truncationMode(.head)
+                                Spacer()
+                                Text(value.value).font(.system(.callout, design: .monospaced)).lineLimit(1)
+                            }
+                            .padding(.vertical, 3).padding(.horizontal, 6)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(liveSelected?.id == value.id ? Color.accentColor.opacity(0.18) : .clear))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            if let value = liveSelected {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(value.label).font(.system(.caption, design: .monospaced)).lineLimit(2)
+                    HStack {
+                        TextField("New value", text: $liveNew)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { host.liveSet(value, to: liveNew) }
+                        Button("Set") { host.liveSet(value, to: liveNew) }
+                            .disabled(!value.isString && Double(liveNew.trimmed) == nil)
+                    }
+                    HStack {
+                        Toggle("Freeze", isOn: Binding(
+                            get: { host.frozen.contains(value.id) },
+                            set: { host.liveFreeze(value, on: $0, text: liveNew) }
+                        ))
+                        .help("Keep it at this value, even when the game changes it")
+                        Spacer()
+                        Button("Copy for Chrome") {
+                            ClipboardHelper.copy(HTMLGameHost.consoleLine(value, newValue: liveNew))
+                            host.status = "Copied. In Chrome, open the game, press ⌥⌘J for the Console, paste and press Return."
+                        }
+                        .help("A one-line script that makes the same change in the game in Chrome or any browser")
+                    }
+                }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+            }
+            Text("Tip: lots of matches? Change the number in the game (earn or spend some), type the new number and press Narrow Down. Repeat until one or two are left. The game saves your change itself.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    // MARK: Saves
+
+    private var savesView: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Saves & Storage").font(.headline)
                 Spacer()
@@ -622,13 +957,11 @@ struct HTMLGameEditorView: View {
             }
             Toggle("Restart the game after saving a change", isOn: $host.reloadAfterSave)
                 .font(.caption)
-            Text("Changes go straight into this game's storage in MacTools. A game that's running may save over them, so the game restarts after each change by default.")
+            Text("Changes go straight into this game's storage in MacTools. A game that's running may save over them, so the game restarts after each change by default. For games that keep saving from memory (like Cookie Clicker), Live Values is the surer way.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(12)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
     }
 
     private var itemList: some View {

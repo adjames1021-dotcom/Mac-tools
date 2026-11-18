@@ -303,6 +303,100 @@ enum GameDataCodec {
     }
 }
 
+// MARK: - Text saves
+
+/// A save that's text rather than JSON, packed as Base64 – optionally URL-escaped and ending in a marker such as
+/// "!END!" (the style Cookie Clicker and other incremental games use, with fields split by "|" and ";").
+struct PackedText {
+    enum Packing: String {
+        case base64 = "Base64 text"
+        case escapedBase64 = "Escaped Base64 text"
+    }
+    let packing: Packing
+    let text: String
+    let suffix: String
+}
+
+/// A number found inside a text save.
+struct TextNumber: Identifiable, Hashable {
+    let range: Range<String.Index>
+    let text: String
+    let context: String
+    /// Where it sits when the save is split by "|" and ";" (e.g. "section 4 · item 1"), if it is.
+    let place: String
+    var id: Int
+}
+
+enum TextSave {
+    private static let base64Chars = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
+    /// What JavaScript's escape() leaves alone.
+    private static let escapeSafe = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@*_+-./")
+
+    static func unpack(_ raw: String) -> PackedText? {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var escaped = false
+        if text.contains("%"), let plain = text.removingPercentEncoding, plain != text {
+            text = plain
+            escaped = true
+        }
+        var suffix = ""
+        for marker in ["!END!", "!end!"] where text.hasSuffix(marker) {
+            suffix = marker
+            text.removeLast(marker.count)
+        }
+        guard text.count >= 8, text.unicodeScalars.allSatisfy({ base64Chars.contains($0) }) else { return nil }
+        let padded = text + String(repeating: "=", count: (4 - text.count % 4) % 4)
+        guard let data = Data(base64Encoded: padded), let decoded = String(data: data, encoding: .utf8) else { return nil }
+        // Only real text: almost every character printable, no control characters other than line breaks/tabs.
+        let scalars = decoded.unicodeScalars
+        let printable = scalars.filter { $0.value >= 32 || $0 == "\n" || $0 == "\r" || $0 == "\t" }.count
+        guard !scalars.isEmpty, Double(printable) / Double(scalars.count) > 0.97 else { return nil }
+        return PackedText(packing: escaped ? .escapedBase64 : .base64, text: decoded, suffix: suffix)
+    }
+
+    static func pack(_ text: String, like original: PackedText) -> String {
+        let packed = Data(text.utf8).base64EncodedString() + original.suffix
+        guard original.packing == .escapedBase64 else { return packed }
+        var out = ""
+        for scalar in packed.unicodeScalars {
+            if escapeSafe.contains(scalar) { out.unicodeScalars.append(scalar) }
+            else { out += String(format: "%%%02X", scalar.value) }
+        }
+        return out
+    }
+
+    /// Numbers in the text equal to `query` – or, with `close`, within 1% of it (games often show rounded numbers).
+    static func numbers(in text: String, matching query: String, close: Bool) -> [TextNumber] {
+        let wanted = query.trimmingCharacters(in: .whitespaces)
+        guard let target = Double(wanted),
+              let regex = try? NSRegularExpression(pattern: #"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"#) else { return [] }
+        let structured = text.contains("|")
+        var out: [TextNumber] = []
+        let whole = NSRange(text.startIndex..., in: text)
+        for match in regex.matches(in: text, range: whole) {
+            guard let range = Range(match.range, in: text) else { continue }
+            let found = String(text[range])
+            guard let value = Double(found) else { continue }
+            let hit = found == wanted || value == target
+                || (close && (value.rounded(.down) == target.rounded(.down) || abs(value - target) <= max(1, abs(target) * 0.01)))
+            guard hit else { continue }
+            let before = text[text.index(range.lowerBound, offsetBy: -min(24, text.distance(from: text.startIndex, to: range.lowerBound)))..<range.lowerBound]
+            let after = text[range.upperBound..<text.index(range.upperBound, offsetBy: min(24, text.distance(from: range.upperBound, to: text.endIndex)))]
+            var place = ""
+            if structured {
+                let prefix = text[..<range.lowerBound]
+                let section = prefix.filter { $0 == "|" }.count
+                let item = (prefix.split(separator: "|", omittingEmptySubsequences: false).last ?? "").filter { $0 == ";" }.count
+                place = "section \(section) · item \(item)"
+            }
+            out.append(TextNumber(range: range, text: found, context: "…\(before)⟦\(found)⟧\(after)…", place: place,
+                                  id: text.distance(from: text.startIndex, to: range.lowerBound)))
+            if out.count >= 300 { break }
+        }
+        return out
+    }
+}
+
 // MARK: - JSON values
 
 enum JSONPathPart: Hashable {
@@ -435,30 +529,42 @@ struct GameDataEditorView: View {
     @State private var message = ""
     @State private var loaded = false
     @State private var changed = false
+    /// For text saves (e.g. Cookie Clicker): the unpacked text and a number finder.
+    @State private var packedText: PackedText?
+    @State private var textBody = ""
+    @State private var numberQuery = ""
+    @State private var close = true
+    @State private var selectedNumber: TextNumber?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(title).font(.headline).lineLimit(1)
-                if let decoded = decoded {
-                    Text(decoded.format.rawValue)
+                if let format = decoded?.format.rawValue ?? packedText?.packing.rawValue {
+                    Text(format)
                         .font(.caption)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentColor.opacity(0.18)))
                         .help("How the game packed this save. MacTools packs it back the same way.")
                 }
                 Spacer()
-                if decoded != nil {
+                if decoded != nil || packedText != nil {
                     Picker("", selection: $showRaw) {
                         Text("Values").tag(false)
-                        Text("Raw JSON").tag(true)
+                        Text(decoded != nil ? "Raw JSON" : "Raw Text").tag(true)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .frame(width: 190)
                 }
             }
-            if decoded == nil {
+            if packedText != nil {
+                if showRaw {
+                    CodeEditor(text: $textBody, minHeight: 300)
+                } else {
+                    textNumbersView
+                }
+            } else if decoded == nil {
                 Text("This isn't JSON (or packed JSON) MacTools recognises, so it's shown as plain text.")
                     .font(.caption).foregroundStyle(.secondary)
                 CodeEditor(text: $rawText, minHeight: 260)
@@ -473,6 +579,13 @@ struct GameDataEditorView: View {
             }
             HStack {
                 Spacer()
+                Button("Copy Save") {
+                    if let packed = packedResult() {
+                        ClipboardHelper.copy(packed)
+                        message = "Copied. You can paste it into the game's own Import Save option."
+                    }
+                }
+                .help("Copy the packed save, for a game's own Import Save box (Cookie Clicker: Options ▸ Import save)")
                 if let onCancel = onCancel {
                     Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
                 }
@@ -549,9 +662,94 @@ struct GameDataEditorView: View {
             root = found.json
             leaves = JSONTree.leaves(found.json)
             rawText = GameDataCodec.jsonText(found.json, pretty: true) ?? found.text
+        } else if let text = TextSave.unpack(original) {
+            packedText = text
+            textBody = text.text
         } else {
             rawText = original
         }
+    }
+
+    private var textNumbersView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Find a number – type what the game shows, e.g. your cookies (1234567)", text: $numberQuery)
+                    .textFieldStyle(.plain)
+                Toggle("Close to", isOn: $close)
+                    .help("Also match numbers within 1% – games often show rounded numbers like “1.23 million”")
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+            let found = TextSave.numbers(in: textBody, matching: numberQuery, close: close)
+            if numberQuery.trimmed.isEmpty {
+                Text("This save is packed text. Type a number you can see in the game to find where it's stored, or edit the whole text under Raw Text.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("\(found.count) match\(found.count == 1 ? "" : "es")").font(.caption).foregroundStyle(.secondary)
+            }
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(found) { number in
+                        Button {
+                            selectedNumber = number
+                            newValue = number.text
+                        } label: {
+                            HStack {
+                                Text(number.context).font(.system(.caption, design: .monospaced)).lineLimit(1)
+                                Spacer()
+                                Text(number.place).font(.caption).foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 3).padding(.horizontal, 6)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(selectedNumber?.id == number.id ? Color.accentColor.opacity(0.18) : .clear))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(minHeight: 200, maxHeight: 360)
+            if let number = selectedNumber {
+                HStack {
+                    Text(number.place.isEmpty ? "Set \(number.text) to" : "Set \(number.place) to").font(.caption)
+                    TextField("New value", text: $newValue)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 160)
+                        .onSubmit { setNumber(number) }
+                    Button("Set") { setNumber(number) }
+                        .disabled(Double(newValue.trimmed) == nil)
+                }
+            }
+        }
+    }
+
+    private func setNumber(_ number: TextNumber) {
+        let value = newValue.trimmed
+        guard Double(value) != nil, number.range.upperBound <= textBody.endIndex,
+              String(textBody[number.range]) == number.text else { return }
+        textBody.replaceSubrange(number.range, with: value)
+        selectedNumber = nil
+        changed = true
+        message = "Changed \(number.text) to \(value). Click Save (or Copy Save) to use it."
+    }
+
+    /// The edited save, packed the way the game packed it.
+    private func packedResult() -> String? {
+        if let text = packedText { return TextSave.pack(textBody, like: text) }
+        guard let decoded = decoded else { return rawText }
+        var json = root
+        if showRaw {
+            guard let parsed = GameDataCodec.parse(rawText) else {
+                message = "That isn't valid JSON yet."
+                return nil
+            }
+            json = parsed
+        }
+        guard let packed = GameDataCodec.encode(json, as: decoded.format, pretty: decoded.pretty) else {
+            message = "Couldn't pack the save."
+            return nil
+        }
+        return packed
     }
 
     private func setValue(_ leaf: JSONLeaf) {
@@ -576,21 +774,7 @@ struct GameDataEditorView: View {
     }
 
     private func save() {
-        guard let decoded = decoded else {
-            onSave(rawText)
-            return
-        }
-        if showRaw {
-            guard let json = GameDataCodec.parse(rawText) else {
-                message = "That isn't valid JSON yet."
-                return
-            }
-            root = json
-        }
-        guard let packed = GameDataCodec.encode(root, as: decoded.format, pretty: decoded.pretty) else {
-            message = "Couldn't pack the save."
-            return
-        }
+        guard let packed = packedResult() else { return }
         onSave(packed)
     }
 }
