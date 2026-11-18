@@ -165,9 +165,6 @@ enum SaveScan {
         let looksNumeric = Double(trimmed) != nil
         if looksNumeric {
             for enc in encodings {
-                if enc.isFloat && Int64(trimmed) != nil && !trimmed.contains(".") {
-                    // a plain integer: still worth checking as a float
-                }
                 if let bytes = encodeNumber(trimmed, enc) { out.append((enc.title, enc, bytes)) }
             }
         }
@@ -179,14 +176,11 @@ enum SaveScan {
                 utf16.append(UInt8(scalar.value & 0xFF))
                 utf16.append(UInt8(scalar.value >> 8))
             }
-            if utf16 != ascii.flatMap({ [$0, 0] }) || ascii.contains(where: { $0 > 0x7F }) {
-                out.append(("Text (UTF-16)", nil, utf16))
-            } else {
-                out.append(("Text (UTF-16)", nil, utf16))
-            }
+            out.append(("Text (UTF-16)", nil, utf16))
         }
-        // Drop duplicate byte patterns (e.g. a one-digit number as UInt8 and the same single ASCII byte differ, keep both labels).
-        return out.filter { !$0.2.isEmpty }
+        // The same bytes found twice (e.g. 1000 as Int16 and UInt16) are one match: keep the first way of reading it.
+        var seen = Set<[UInt8]>()
+        return out.filter { !$0.2.isEmpty && seen.insert($0.2).inserted }
     }
 
     /// Finds every offset of `pattern` in `data`, up to `limit`.
@@ -241,7 +235,8 @@ final class SaveFile: ObservableObject {
         // Treat it as text if (almost) every byte is printable/whitespace – then it can be edited as text.
         let sample = loaded.prefix(65_536)
         let weird = sample.filter { $0 != 9 && $0 != 10 && $0 != 13 && !(32...126).contains($0) && $0 < 0x80 }.count
-        isText = !sample.isEmpty && Double(weird) / Double(sample.count) < 0.02
+        // Text mode saves as UTF-8, so only files that already are valid UTF-8 are safe to edit as text.
+        isText = !sample.isEmpty && Double(weird) / Double(sample.count) < 0.02 && String(data: loaded, encoding: .utf8) != nil
         let trimmed = loaded.prefix(1).first
         isJSON = isText && (trimmed == 0x7B || trimmed == 0x5B)
         dirty = false
@@ -345,7 +340,10 @@ struct SaveInspectorView: View {
                 }
                 Spacer()
                 if file.url != nil {
-                    Button("Restore Backup") { file.restoreBackup() }
+                    Button("Restore Backup") {
+                        file.restoreBackup()
+                        editorText = file.text
+                    }
                         .help("Put back the .bak copy MacTools made before your first save.")
                 }
             }
@@ -361,7 +359,19 @@ struct SaveInspectorView: View {
         editorText = file.text
     }
 
+    @ViewBuilder
     private var textEditor: some View {
+        if !file.isText {
+            Card(title: "Text", icon: "curlybraces") {
+                Text("This file isn't plain UTF-8 text, so editing it as text could damage it. Use the Value Finder instead.")
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            textCard
+        }
+    }
+
+    private var textCard: some View {
         Card(title: file.isJSON ? "JSON" : "Text", icon: "curlybraces") {
             Text("Find a value like your money (search with ⌘F in the box), change it, then Save. For JSON the file is checked before saving.")
                 .font(.caption)
@@ -417,6 +427,8 @@ private struct SaveFinderView: View {
     @State private var selected: SaveScan.Match?
     @State private var newValue = ""
     @State private var searched = false
+    @State private var searching = false
+    @State private var searchToken = 0
 
     var body: some View {
         Card(title: "Find a Value", icon: "magnifyingglass") {
@@ -429,9 +441,10 @@ private struct SaveFinderView: View {
                     .onSubmit(run)
                 Toggle("Text too", isOn: $searchText)
                     .help("Also look for the value written as plain text")
+                if searching { ProgressView().controlSize(.small) }
                 Button("Search", action: run)
                     .buttonStyle(.borderedProminent)
-                    .disabled(query.trimmed.isEmpty)
+                    .disabled(query.trimmed.isEmpty || searching)
             }
             DisclosureGroup("Number formats to try (\(encodings.count))") {
                 let columns = [GridItem(.adaptive(minimum: 150), spacing: 6)]
@@ -552,8 +565,23 @@ private struct SaveFinderView: View {
     }
 
     private func run() {
-        matches = SaveScan.search(query, in: file.data, encodings: NumEnc.allCases.filter { encodings.contains($0) }, text: searchText)
+        // Big files take a while to scan, so search off the main thread and ignore results from an older search.
+        searchToken += 1
+        let token = searchToken
+        let data = file.data
+        let text = query
+        let chosen = NumEnc.allCases.filter { encodings.contains($0) }
+        let alsoText = searchText
+        searching = true
         selected = nil
-        searched = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = SaveScan.search(text, in: data, encodings: chosen, text: alsoText)
+            DispatchQueue.main.async {
+                guard token == searchToken else { return }
+                matches = found
+                searching = false
+                searched = true
+            }
+        }
     }
 }

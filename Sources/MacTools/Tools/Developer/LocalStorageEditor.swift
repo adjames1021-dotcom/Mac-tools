@@ -10,6 +10,8 @@ enum ChromiumLocalStorage {
         let id = UUID()
         var key: String
         var value: String
+        /// The key as it's stored on the site (nil for keys added in MacTools), so a rename removes the old one.
+        var original: String? = nil
     }
 
     private static func varint(_ bytes: [UInt8], _ i: inout Int) -> Int? {
@@ -80,15 +82,8 @@ enum ChromiumLocalStorage {
         guard let first = bytes.first else { return "" }
         let rest = Array(bytes.dropFirst())
         if first == 0x00 {
-            var scalars = ""
-            var i = 0
-            while i + 1 < rest.count + 1 && i + 1 <= rest.count {
-                if i + 1 >= rest.count { break }
-                let code = UInt16(rest[i]) | (UInt16(rest[i + 1]) << 8)
-                scalars.unicodeScalars.append(UnicodeScalar(code) ?? UnicodeScalar(0xFFFD)!)
-                i += 2
-            }
-            return scalars
+            let units = stride(from: 0, to: rest.count - 1, by: 2).map { UInt16(rest[$0]) | (UInt16(rest[$0 + 1]) << 8) }
+            return String(decoding: units, as: UTF16.self)
         }
         if first == 0x01 {
             return String(bytes: rest, encoding: .isoLatin1) ?? String(decoding: rest, as: UTF8.self)
@@ -101,6 +96,7 @@ enum ChromiumLocalStorage {
         let fm = FileManager.default
         let files = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
         var map: [String: [String: String]] = [:]
+        var deleted = Set<String>()   // "origin\0key" removed by the log
 
         func applyKey(_ key: [UInt8], _ value: [UInt8]?) {
             guard key.first == 0x5F, let nul = key.dropFirst().firstIndex(of: 0x00) else { return }   // "_origin\0key"
@@ -109,8 +105,10 @@ enum ChromiumLocalStorage {
             let scriptKey = decodeString(key[(nul + 1)...])
             if let value = value {
                 map[origin, default: [:]][scriptKey] = decodeString(value[...])
+                deleted.remove(origin + "\u{0}" + scriptKey)
             } else {
                 map[origin]?[scriptKey] = nil
+                deleted.insert(origin + "\u{0}" + scriptKey)
             }
         }
 
@@ -125,13 +123,13 @@ enum ChromiumLocalStorage {
         for url in files.filter({ $0.pathExtension == "ldb" || $0.pathExtension == "sst" }) {
             guard let data = try? Data(contentsOf: url) else { continue }
             heuristicScan([UInt8](data)) { origin, key, value in
-                if map[origin]?[key] == nil { map[origin, default: [:]][key] = value }
+                if map[origin]?[key] == nil, !deleted.contains(origin + "\u{0}" + key) { map[origin, default: [:]][key] = value }
             }
         }
 
         var result: [String: [Entry]] = [:]
         for (origin, pairs) in map {
-            result[origin] = pairs.sorted { $0.key < $1.key }.map { Entry(key: $0.key, value: $0.value) }
+            result[origin] = pairs.sorted { $0.key < $1.key }.map { Entry(key: $0.key, value: $0.value, original: $0.key) }
         }
         return result
     }
@@ -170,7 +168,8 @@ enum ChromiumLocalStorage {
             return String(json.dropFirst().dropLast())   // the array's single quoted element
         }
         var lines = ["// Open \(origin) in your browser, open the DevTools Console (⌥⌘I), paste this and press Return:"]
-        for key in removed { lines.append("localStorage.removeItem(\(jsString(key)));") }
+        let renamed = entries.compactMap { entry in entry.original.flatMap { $0 != entry.key ? $0 : nil } }
+        for key in removed + renamed { lines.append("localStorage.removeItem(\(jsString(key)));") }
         for entry in entries { lines.append("localStorage.setItem(\(jsString(entry.key)), \(jsString(entry.value)));") }
         lines.append("location.reload();")
         return lines.joined(separator: "\n")
@@ -188,17 +187,17 @@ struct BrowserProfile: Identifiable, Hashable {
 }
 
 enum BrowserCatalog {
-    /// name → the folder under Application Support that holds the profiles.
-    private static let chromium: [(String, String)] = [
-        ("Google Chrome", "Google/Chrome"),
-        ("Chrome Beta", "Google/Chrome Beta"),
-        ("Chrome Canary", "Google/Chrome Canary"),
-        ("Chromium", "Chromium"),
-        ("Microsoft Edge", "Microsoft Edge"),
-        ("Brave", "BraveSoftware/Brave-Browser"),
-        ("Vivaldi", "Vivaldi"),
-        ("Opera", "com.operasoftware.Opera"),
-        ("Arc", "Arc/User Data"),
+    /// name → the folder under Application Support that holds the profiles, and the app's bundle identifier.
+    private static let chromium: [(String, String, String)] = [
+        ("Google Chrome", "Google/Chrome", "com.google.Chrome"),
+        ("Chrome Beta", "Google/Chrome Beta", "com.google.Chrome.beta"),
+        ("Chrome Canary", "Google/Chrome Canary", "com.google.Chrome.canary"),
+        ("Chromium", "Chromium", "org.chromium.Chromium"),
+        ("Microsoft Edge", "Microsoft Edge", "com.microsoft.edgemac"),
+        ("Brave", "BraveSoftware/Brave-Browser", "com.brave.Browser"),
+        ("Vivaldi", "Vivaldi", "com.vivaldi.Vivaldi"),
+        ("Opera", "com.operasoftware.Opera", "com.operasoftware.Opera"),
+        ("Arc", "Arc/User Data", "company.thebrowser.Browser"),
     ]
 
     static func discover() -> [BrowserProfile] {
@@ -206,7 +205,7 @@ enum BrowserCatalog {
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         var out: [BrowserProfile] = []
-        for (name, path) in chromium {
+        for (name, path, _) in chromium {
             let base = support.appendingPathComponent(path)
             guard fm.fileExists(atPath: base.path) else { continue }
             // A browser keeps either one store (Opera) or one per profile folder (Default, Profile 1…).
@@ -227,9 +226,8 @@ enum BrowserCatalog {
 
     /// Whether a browser with this name is running (so we can warn that its on-disk data may be out of date).
     static func isRunning(_ browser: String) -> Bool {
-        let names = NSWorkspace.shared.runningApplications.compactMap { $0.localizedName?.lowercased() }
-        let needle = browser.lowercased().replacingOccurrences(of: " beta", with: "").replacingOccurrences(of: " canary", with: "")
-        return names.contains { $0.contains(needle) || (needle == "google chrome" && $0.contains("chrome")) }
+        guard let bundleID = chromium.first(where: { $0.0 == browser })?.2 else { return false }
+        return !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
     }
 }
 
@@ -354,7 +352,7 @@ struct LocalStorageEditorView: View {
                                         .textFieldStyle(.roundedBorder)
                                         .font(.system(.callout, design: .monospaced))
                                     Button {
-                                        removed.append(entry.key)
+                                        removed.append(entry.original ?? entry.key)
                                         entries.removeAll { $0.id == entry.id }
                                     } label: { Image(systemName: "trash") }
                                         .buttonStyle(.borderless)

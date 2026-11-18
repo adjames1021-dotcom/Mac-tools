@@ -870,9 +870,10 @@ enum SchoolJS {
       // "View all" / "Show more" buttons that load the rest of a list (buttons only, so the page doesn't navigate away).
       for (const el of document.querySelectorAll('button, [role="button"]')) {
         if (clicked >= 40) break;
-        if (el.getAttribute('data-mt-clicked') || !visible(el)) continue;
+        if (el.getAttribute('data-mt-clicked') || !visible(el) || el.hasAttribute('aria-haspopup')) continue;
+        if (el.closest('header, nav, [role="navigation"], [role="banner"], [role="menu"], [role="dialog"], [role="listbox"]')) continue;
         const label = (el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-        if (!/^(view all|show all|show more|view more|load more|see all|see more|more)$/i.test(label)) continue;
+        if (!/^(view all|show all|show more|view more|load more|see all|see more)$/i.test(label)) continue;
         el.setAttribute('data-mt-clicked', '1');
         el.click();
         clicked += 1;

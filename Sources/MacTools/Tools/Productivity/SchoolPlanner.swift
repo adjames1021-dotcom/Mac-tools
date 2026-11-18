@@ -564,12 +564,17 @@ final class SchoolPlanner: ObservableObject {
         didSet { if settings != oldValue { Prefs.save(Self.settingsKey, settings) } }
     }
     @Published private(set) var saved: SchoolSaved {
-        didSet { recountTitles() }
+        didSet {
+            recountTitles()
+            rebuildItems()
+        }
     }
     /// Check-offs: memory key → when it was checked. Kept in its own file so it survives anything else changing.
     @Published private(set) var checked: [String: Date]
     /// Your edits, hidden items and added items.
-    @Published private(set) var changes: SchoolChanges
+    @Published private(set) var changes: SchoolChanges {
+        didSet { rebuildItems() }
+    }
     @Published private(set) var phase: Phase = .idle
     /// 0…1 while syncing, for the progress bar. Eases forward inside each step so it never sits still.
     @Published private(set) var progress: Double = 0
@@ -611,6 +616,7 @@ final class SchoolPlanner: ObservableObject {
             keyStatus[provider] = UserDefaults.standard.bool(forKey: "schoolTodoHasKey.\(provider.rawValue)")
         }
         recountTitles()
+        rebuildItems()
     }
 
     func start() {
@@ -737,8 +743,11 @@ final class SchoolPlanner: ObservableObject {
     // MARK: Lists
 
     /// Everything there is: synced items with your edits on top, plus the items you added.
-    var allItems: [SchoolItem] {
-        saved.items.map { (item: SchoolItem) -> SchoolItem in
+    /// Rebuilt only when the synced list or your changes change, not on every redraw.
+    private(set) var allItems: [SchoolItem] = []
+
+    private func rebuildItems() {
+        allItems = saved.items.map { (item: SchoolItem) -> SchoolItem in
             var shown = edit(for: item)?.applied(to: item) ?? item
             shown.originalKeys = item.keys
             return shown
