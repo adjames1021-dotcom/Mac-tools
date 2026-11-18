@@ -243,3 +243,21 @@ private struct ThemeSwatch: View {
         .buttonStyle(.plain)
     }
 }
+
+/// Removes the thin separator macOS draws under the title bar (it otherwise shows as a line across the
+/// traffic-light buttons when a page scrolls).
+struct WindowChromeFix: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        apply(view)
+        return view
+    }
+    func updateNSView(_ nsView: NSView, context: Context) { apply(nsView) }
+
+    private func apply(_ view: NSView) {
+        DispatchQueue.main.async { [weak view] in
+            guard let window = view?.window else { return }
+            window.titlebarSeparatorStyle = .none
+        }
+    }
+}

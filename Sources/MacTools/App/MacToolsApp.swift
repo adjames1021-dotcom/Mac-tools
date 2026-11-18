@@ -12,6 +12,7 @@ struct MacToolsApp: App {
             ContentView()
                 .environmentObject(appState)
                 .themedRoot()
+                .background(WindowChromeFix())
                 .frame(minWidth: 1080, minHeight: 680)
         }
         .commands {

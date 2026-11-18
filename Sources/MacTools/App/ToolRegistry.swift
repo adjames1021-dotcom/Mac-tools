@@ -25,11 +25,11 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // Fun
     case christmas
     // Developer
-    case httpClient, gitHelper, portMonitor, devEnvironment, homebrew, sshKeys, jwtDecoder, urlParser, csvJson, cronHelper, markdownPreview, snippets, gitignoreGen, hexViewer, chromeExtensionViewer, encryption, keyCodeViewer, devCleaner
+    case httpClient, gitHelper, portMonitor, devEnvironment, homebrew, sshKeys, jwtDecoder, urlParser, csvJson, cronHelper, markdownPreview, snippets, gitignoreGen, hexViewer, chromeExtensionViewer, encryption, keyCodeViewer, devCleaner, localStorage
     // Text & data
     case textTools, jsonFormatter, regexTester, diffChecker, passwordGenerator, hashTool, qrCode, randomGenerator
     // Files & media
-    case pdfEditor, batchRenamer, imageTools, diskUsage, duplicateFinder
+    case pdfEditor, batchRenamer, imageTools, diskUsage, duplicateFinder, saveInspector
     // System
     case systemInfo, processManager, appUninstaller, startupItems, systemToggles
     // Network
@@ -43,7 +43,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home, .themes, .settings, .updates: return .general
         case .christmas: return .fun
-        case .httpClient, .gitHelper, .portMonitor, .devEnvironment, .homebrew, .sshKeys, .jwtDecoder, .urlParser, .csvJson, .cronHelper, .markdownPreview, .snippets, .gitignoreGen, .hexViewer, .chromeExtensionViewer, .encryption, .keyCodeViewer, .devCleaner:
+        case .httpClient, .gitHelper, .portMonitor, .devEnvironment, .homebrew, .sshKeys, .jwtDecoder, .urlParser, .csvJson, .cronHelper, .markdownPreview, .snippets, .gitignoreGen, .hexViewer, .chromeExtensionViewer, .encryption, .keyCodeViewer, .devCleaner, .localStorage:
             return .developer
         case .macroRecorder, .autoClicker, .autoTyper, .keyPresser, .textExpander, .keepAwake, .scheduler, .shellRunner, .launcher, .keyboardLock:
             return .automation
@@ -51,7 +51,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
             return .productivity
         case .textTools, .jsonFormatter, .regexTester, .diffChecker, .passwordGenerator, .hashTool, .qrCode, .randomGenerator:
             return .text
-        case .pdfEditor, .batchRenamer, .imageTools, .diskUsage, .duplicateFinder:
+        case .pdfEditor, .batchRenamer, .imageTools, .diskUsage, .duplicateFinder, .saveInspector:
             return .files
         case .systemInfo, .processManager, .appUninstaller, .startupItems, .systemToggles:
             return .system
@@ -84,6 +84,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .gitignoreGen: return ".gitignore Generator"
         case .hexViewer: return "Hex Viewer"
         case .chromeExtensionViewer: return "Chrome Extension Viewer"
+        case .localStorage: return "Local Storage Editor"
         case .encryption: return "Encrypt & Decrypt"
         case .keyCodeViewer: return "Key Code Viewer"
         case .devCleaner: return "Developer Cleaner"
@@ -121,6 +122,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .imageTools: return "Image Converter"
         case .diskUsage: return "Disk Usage"
         case .duplicateFinder: return "Duplicate Finder"
+        case .saveInspector: return "Save Editor"
         case .systemInfo: return "System Info"
         case .processManager: return "App & Process Manager"
         case .systemToggles: return "System Toggles"
@@ -154,6 +156,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .gitignoreGen: return "eye.slash"
         case .hexViewer: return "doc.viewfinder"
         case .chromeExtensionViewer: return "puzzlepiece.extension"
+        case .localStorage: return "externaldrive.badge.person.crop"
         case .encryption: return "lock.doc"
         case .keyCodeViewer: return "keyboard.badge.eye"
         case .devCleaner: return "externaldrive.badge.minus"
@@ -191,6 +194,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .imageTools: return "photo.on.rectangle"
         case .diskUsage: return "internaldrive"
         case .duplicateFinder: return "doc.on.doc"
+        case .saveInspector: return "doc.badge.gearshape"
         case .systemInfo: return "info.circle"
         case .processManager: return "list.bullet.rectangle"
         case .systemToggles: return "switch.2"
@@ -224,6 +228,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .gitignoreGen: return "Build a .gitignore for your project's languages and tools."
         case .hexViewer: return "Look inside any file byte by byte and detect its real type."
         case .chromeExtensionViewer: return "Download any Chrome Web Store extension and read its source code."
+        case .localStorage: return "View and edit your browser's localStorage for any website."
         case .encryption: return "Password-protect text and files with AES-256 encryption."
         case .keyCodeViewer: return "Press any key to see its key code, characters and modifiers."
         case .devCleaner: return "Free space taken by Xcode, npm, Homebrew and other caches and node_modules."
@@ -261,6 +266,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .imageTools: return "Convert, resize, rotate images and combine them into a PDF."
         case .diskUsage: return "Find what is using your disk space."
         case .duplicateFinder: return "Find duplicate files by content."
+        case .saveInspector: return "Break down save files and find and edit values like money, in any file type."
         case .systemInfo: return "Hardware, memory, disk, battery and OS details."
         case .processManager: return "See running apps and processes, quit or force quit them."
         case .systemToggles: return "Hidden files, dark mode, Dock, Finder tweaks and quick actions."
@@ -294,6 +300,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .gitignoreGen: return AnyView(GitignoreView())
         case .hexViewer: return AnyView(HexViewerView())
         case .chromeExtensionViewer: return AnyView(ChromeExtensionViewerView())
+        case .localStorage: return AnyView(LocalStorageEditorView())
         case .encryption: return AnyView(EncryptionView())
         case .keyCodeViewer: return AnyView(KeyCodeViewerView())
         case .devCleaner: return AnyView(DevCleanerView())
@@ -331,6 +338,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .imageTools: return AnyView(ImageToolsView())
         case .diskUsage: return AnyView(DiskUsageView())
         case .duplicateFinder: return AnyView(DuplicateFinderView())
+        case .saveInspector: return AnyView(SaveInspectorView())
         case .systemInfo: return AnyView(SystemInfoView())
         case .processManager: return AnyView(ProcessManagerView())
         case .systemToggles: return AnyView(SystemTogglesView())

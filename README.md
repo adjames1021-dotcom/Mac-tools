@@ -130,6 +130,7 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **Encrypt & Decrypt**: password-protect text or files with AES-256-GCM.
 - **Key Code Viewer**: press keys to see their key codes, characters and modifiers.
 - **Developer Cleaner**: measure and clear Xcode DerivedData, archives, simulator caches, npm/Yarn/pnpm/pip/Gradle/Maven/Go/Cargo/Homebrew caches, and find old `node_modules` folders.
+- **Local Storage Editor**: view the `localStorage` your Chrome-family browsers (Chrome, Edge, Brave, Arc, Opera, Vivaldi, Chromium) keep on disk, per website – it reads the LevelDB store directly. Edit, add or remove keys, then **Apply in Browser**: MacTools opens the site and copies a short `localStorage.setItem(…)` script to paste into the DevTools Console, which is the safe way to change a site's storage and works in every browser (Safari and Firefox included). MacTools never writes to the browser's own files.
 
 ### Text & data
 - **Text Tools**: 40 transformations (all case styles, sort, dedupe, shuffle and number lines, Base64, URL, HTML, ROT13, slugify…), find & replace, word, character and line counts, and lorem ipsum.
@@ -151,6 +152,10 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **Image Converter**: convert between JPEG, PNG, HEIC, TIFF, GIF, BMP and PDF; resize, rotate, flip; combine images into a PDF.
 - **Disk Usage**: volume overview, the biggest folders and files, and Move to Trash.
 - **Duplicate Finder**: finds identical files by content (SHA-256) and shows how much space you'd save.
+- **Save Editor**: break down a game save or any data file and find and change values like money, coins, lives or score.
+  - **Value Finder** for binary saves (`.sav`, `.dat`, …): type a number (or text) and it searches every common layout at once – 8/16/32/64-bit integers, 32/64-bit floats, little- and big-endian, and plain text. Pick a match to see a **data inspector** (that spot read as every type) and set a new value. Not sure which match is the real one? Change it in the game, reload and search the new number – the right one keeps the same offset.
+  - **Text / Structured** mode for `.json`, `.xml`, `.plist`, `.ini` and other text saves: search, edit and save, with JSON checked before saving.
+  - Always makes a `.bak` backup before the first save, and only ever changes the file you open – never the game. One-click **Restore Backup**.
 
 ### System & network
 - **System Info**: CPU, memory, disk, battery, uptime, load and thermal state.
