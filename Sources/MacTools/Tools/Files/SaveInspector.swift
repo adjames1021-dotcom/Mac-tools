@@ -219,6 +219,8 @@ final class SaveFile: ObservableObject {
     @Published private(set) var typeName = ""
     @Published private(set) var isText = false
     @Published private(set) var isJSON = false
+    /// Set when the file is a packed game save (e.g. RPG Maker MV's LZString `.rpgsave`, or Base64/plain JSON).
+    @Published private(set) var gameFormat: GameDataFormat?
     @Published private(set) var status = ""
     @Published private(set) var dirty = false
 
@@ -239,6 +241,7 @@ final class SaveFile: ObservableObject {
         isText = !sample.isEmpty && Double(weird) / Double(sample.count) < 0.02 && String(data: loaded, encoding: .utf8) != nil
         let trimmed = loaded.prefix(1).first
         isJSON = isText && (trimmed == 0x7B || trimmed == 0x5B)
+        gameFormat = isText ? GameDataCodec.decode(String(decoding: loaded, as: UTF8.self))?.format : nil
         dirty = false
         status = ""
     }
@@ -293,24 +296,30 @@ struct SaveInspectorView: View {
     @StateObject private var file = SaveFile()
     @State private var mode = Mode.find
     @State private var editorText = ""
+    /// Bumped when a file is opened or restored, so the game-data editor starts over from the file.
+    @State private var version = 0
 
     enum Mode: String, CaseIterable, Identifiable {
+        case game = "Game Data"
         case find = "Value Finder"
         case text = "Text / Structured"
         var id: String { rawValue }
     }
+
+    private var modes: [Mode] { Mode.allCases.filter { $0 != .game || file.gameFormat != nil } }
 
     var body: some View {
         ToolPage(tool: .saveInspector) {
             fileCard
             if file.url != nil {
                 Picker("", selection: $mode) {
-                    ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                    ForEach(modes) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 360)
+                .frame(maxWidth: 480)
                 switch mode {
+                case .game: gameEditor
                 case .find: SaveFinderView(file: file)
                 case .text: textEditor
                 }
@@ -319,9 +328,20 @@ struct SaveInspectorView: View {
                 }
             }
         }
-        .onChange(of: file.isText) { _ in
-            mode = file.isText ? .text : .find
-            editorText = file.text
+    }
+
+    private var gameEditor: some View {
+        Card(title: "Game Data", icon: "gamecontroller") {
+            Text("This save is packed JSON. MacTools unpacked it – find a value like your gold, change it, and Save packs it back the same way.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            GameDataEditorView(title: file.url?.lastPathComponent ?? "Save", original: file.text) { packed in
+                file.setText(packed)
+                file.save()
+                editorText = file.text
+                version += 1
+            }
+            .id(version)
         }
     }
 
@@ -343,6 +363,7 @@ struct SaveInspectorView: View {
                     Button("Restore Backup") {
                         file.restoreBackup()
                         editorText = file.text
+                        version += 1
                     }
                         .help("Put back the .bak copy MacTools made before your first save.")
                 }
@@ -357,6 +378,8 @@ struct SaveInspectorView: View {
     private func load(_ url: URL) {
         file.open(url)
         editorText = file.text
+        version += 1
+        mode = file.gameFormat != nil ? .game : (file.isText ? .text : .find)
     }
 
     @ViewBuilder

@@ -23,7 +23,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // Productivity
     case schoolPlanner, clipboard, notes, timers, windowManager, screenshot, colorPicker, mouseInspector, speech
     // Fun
-    case christmas
+    case christmas, htmlGames
     // Developer
     case httpClient, gitHelper, portMonitor, devEnvironment, homebrew, sshKeys, jwtDecoder, urlParser, csvJson, cronHelper, markdownPreview, snippets, gitignoreGen, hexViewer, chromeExtensionViewer, encryption, keyCodeViewer, devCleaner, localStorage
     // Text & data
@@ -42,7 +42,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     var category: ToolCategory {
         switch self {
         case .home, .themes, .settings, .updates: return .general
-        case .christmas: return .fun
+        case .christmas, .htmlGames: return .fun
         case .httpClient, .gitHelper, .portMonitor, .devEnvironment, .homebrew, .sshKeys, .jwtDecoder, .urlParser, .csvJson, .cronHelper, .markdownPreview, .snippets, .gitignoreGen, .hexViewer, .chromeExtensionViewer, .encryption, .keyCodeViewer, .devCleaner, .localStorage:
             return .developer
         case .macroRecorder, .autoClicker, .autoTyper, .keyPresser, .textExpander, .keepAwake, .scheduler, .shellRunner, .launcher, .keyboardLock:
@@ -67,6 +67,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .home: return "Home"
         case .themes: return "Themes"
         case .christmas: return "Christmas"
+        case .htmlGames: return "HTML Game Editor"
         case .settings: return "Permissions & Hotkeys"
         case .updates: return "Updates"
         case .httpClient: return "HTTP / API Client"
@@ -139,6 +140,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .home: return "square.grid.2x2"
         case .themes: return "paintpalette"
         case .christmas: return "snowflake"
+        case .htmlGames: return "gamecontroller"
         case .settings: return "lock.shield"
         case .updates: return "arrow.down.circle"
         case .httpClient: return "paperplane"
@@ -211,6 +213,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .home: return "Every tool in one place."
         case .themes: return "Color themes and Light or Dark mode for all of MacTools."
         case .christmas: return "Snow, twinkling lights, a countdown, jingle bells and more festive touches."
+        case .htmlGames: return "Play downloaded or online HTML games and edit their saves, storage and values like gold."
         case .settings: return "Grant permissions, customise global hotkeys and app options."
         case .updates: return "Update MacTools automatically from GitHub – no rebuilding by hand."
         case .httpClient: return "Send API requests (GET, POST…) with headers and JSON bodies, like Postman."
@@ -283,6 +286,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .home: return AnyView(HomeView())
         case .themes: return AnyView(ThemesView())
         case .christmas: return AnyView(ChristmasView())
+        case .htmlGames: return AnyView(HTMLGameEditorView())
         case .settings: return AnyView(SettingsToolView())
         case .updates: return AnyView(UpdatesView())
         case .httpClient: return AnyView(HTTPClientView())

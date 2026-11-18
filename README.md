@@ -110,6 +110,11 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **Text to Speech**: every installed voice, speed and pitch, and export to an audio file.
 
 ### Fun
+- **HTML Game Editor**: play an HTML game inside MacTools and edit its saves while you play.
+  - **Downloaded games**: open the game's folder (or its main `.html` file) – RPG Maker MV/MZ, Construct, GameMaker, Twine/SugarCube, Phaser and most other HTML5 games. MacTools serves the folder through a private address so the game loads its data files like it would online, and its saves stay put between launches.
+  - **Website games**: type the address and play it in MacTools' own browser.
+  - The **Saves panel** lists everything the game stores – Local Storage, Session Storage and IndexedDB – and writes changes straight in, then restarts the game so it picks them up. **Find a value in all saves**: type the gold, score or level you see in the game and it lists every matching value, even inside compressed saves.
+  - Saves are **unpacked automatically** (plain JSON, LZString in all three flavours, Base64, URL-encoded), shown value by value with a finder, and packed back the same way when you save. Back up and restore a game's storage to a file.
 - **Christmas**: switch on falling snow (flurries, snowfall or a blizzard), twinkling lights along the top of every page, red-and-green Christmas colors, snowflakes on tool icons, a snowflake menu bar icon with the days until Christmas, a countdown on the Home page, jingle bells when you check off schoolwork or a sync finishes and ornament check-offs in School To-Do. Each is its own switch, and they can be limited to December 1–26.
 
 ### Developer
@@ -130,7 +135,7 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **Encrypt & Decrypt**: password-protect text or files with AES-256-GCM.
 - **Key Code Viewer**: press keys to see their key codes, characters and modifiers.
 - **Developer Cleaner**: measure and clear Xcode DerivedData, archives, simulator caches, npm/Yarn/pnpm/pip/Gradle/Maven/Go/Cargo/Homebrew caches, and find old `node_modules` folders.
-- **Local Storage Editor**: view the `localStorage` your Chrome-family browsers (Chrome, Edge, Brave, Arc, Opera, Vivaldi, Chromium) keep on disk, per website – it reads the LevelDB store directly. Edit, add or remove keys, then **Apply in Browser**: MacTools opens the site and copies a short `localStorage.setItem(…)` script to paste into the DevTools Console, which is the safe way to change a site's storage and works in every browser (Safari and Firefox included). MacTools never writes to the browser's own files.
+- **Local Storage Editor**: view the `localStorage` your Chrome-family browsers (Chrome, Edge, Brave, Arc, Opera, Vivaldi, Chromium) keep on disk, per website – it reads the LevelDB store directly. Edit, add or remove keys, then **Apply in Browser**: MacTools opens the site and copies a short `localStorage.setItem(…)` script to paste into the DevTools Console, which is the safe way to change a site's storage and works in every browser (Safari and Firefox included). Each value also has a **game data** button that unpacks compressed saves (LZString, Base64, JSON) so you can find and change values like gold. MacTools never writes to the browser's own files.
 
 ### Text & data
 - **Text Tools**: 40 transformations (all case styles, sort, dedupe, shuffle and number lines, Base64, URL, HTML, ROT13, slugify…), find & replace, word, character and line counts, and lorem ipsum.
@@ -155,6 +160,7 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **Save Editor**: break down a game save or any data file and find and change values like money, coins, lives or score.
   - **Value Finder** for binary saves (`.sav`, `.dat`, …): type a number (or text) and it searches every common layout at once – 8/16/32/64-bit integers, 32/64-bit floats, little- and big-endian, and plain text. Pick a match to see a **data inspector** (that spot read as every type) and set a new value. Not sure which match is the real one? Change it in the game, reload and search the new number – the right one keeps the same offset.
   - **Text / Structured** mode for `.json`, `.xml`, `.plist`, `.ini` and other text saves: search, edit and save, with JSON checked before saving.
+  - **Game Data** mode for packed saves such as RPG Maker MV's `.rpgsave` (LZString), Base64 or JSON: the save is unpacked, every value is listed with a finder, and Save packs it back the same way.
   - Always makes a `.bak` backup before the first save, and only ever changes the file you open – never the game. One-click **Restore Backup**.
 
 ### System & network

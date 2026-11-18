@@ -244,6 +244,7 @@ struct LocalStorageEditorView: View {
     @State private var search = ""
     @State private var loading = false
     @State private var note = ""
+    @State private var gameEditing: ChromiumLocalStorage.Entry?
 
     var body: some View {
         ToolPage(tool: .localStorage) {
@@ -284,6 +285,16 @@ struct LocalStorageEditorView: View {
             }
         }
         .onAppear { if profiles.isEmpty { discover() } }
+        .sheet(item: $gameEditing) { target in
+            GameDataEditorView(title: target.key, original: target.value, onSave: { packed in
+                if let index = entries.firstIndex(where: { $0.id == target.id }) { entries[index].value = packed }
+                gameEditing = nil
+                note = "Changed \(target.key). Use Apply in Browser to put it into the site."
+            }, onCancel: { gameEditing = nil })
+            .padding(20)
+            .frame(width: 720, height: 600)
+            .themedRoot()
+        }
     }
 
     private var origins: [String] {
@@ -351,6 +362,9 @@ struct LocalStorageEditorView: View {
                                     TextField("key", text: $entry.key)
                                         .textFieldStyle(.roundedBorder)
                                         .font(.system(.callout, design: .monospaced))
+                                    Button { gameEditing = entry } label: { Image(systemName: "gamecontroller") }
+                                        .buttonStyle(.borderless)
+                                        .help("Unpack this value as game data (JSON, LZString, Base64…) and edit values like gold")
                                     Button {
                                         removed.append(entry.original ?? entry.key)
                                         entries.removeAll { $0.id == entry.id }
