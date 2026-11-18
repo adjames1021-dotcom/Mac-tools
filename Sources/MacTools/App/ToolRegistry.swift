@@ -25,7 +25,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // Fun
     case christmas, htmlGames
     // Developer
-    case httpClient, gitHelper, portMonitor, devEnvironment, homebrew, sshKeys, jwtDecoder, urlParser, csvJson, cronHelper, markdownPreview, snippets, gitignoreGen, hexViewer, chromeExtensionViewer, encryption, keyCodeViewer, devCleaner, localStorage
+    case httpClient, gitHelper, portMonitor, devEnvironment, homebrew, sshKeys, jwtDecoder, urlParser, csvJson, cronHelper, markdownPreview, snippets, gitignoreGen, hexViewer, chromeExtensionViewer, chromeInspector, godotInspector, encryption, keyCodeViewer, devCleaner, localStorage
     // Text & data
     case textTools, jsonFormatter, regexTester, diffChecker, passwordGenerator, hashTool, qrCode, randomGenerator
     // Files & media
@@ -43,7 +43,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home, .themes, .settings, .updates: return .general
         case .christmas, .htmlGames: return .fun
-        case .httpClient, .gitHelper, .portMonitor, .devEnvironment, .homebrew, .sshKeys, .jwtDecoder, .urlParser, .csvJson, .cronHelper, .markdownPreview, .snippets, .gitignoreGen, .hexViewer, .chromeExtensionViewer, .encryption, .keyCodeViewer, .devCleaner, .localStorage:
+        case .httpClient, .gitHelper, .portMonitor, .devEnvironment, .homebrew, .sshKeys, .jwtDecoder, .urlParser, .csvJson, .cronHelper, .markdownPreview, .snippets, .gitignoreGen, .hexViewer, .chromeExtensionViewer, .chromeInspector, .godotInspector, .encryption, .keyCodeViewer, .devCleaner, .localStorage:
             return .developer
         case .macroRecorder, .autoClicker, .autoTyper, .keyPresser, .textExpander, .keepAwake, .scheduler, .shellRunner, .launcher, .keyboardLock:
             return .automation
@@ -85,6 +85,8 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .gitignoreGen: return ".gitignore Generator"
         case .hexViewer: return "Hex Viewer"
         case .chromeExtensionViewer: return "Chrome Extension Viewer"
+        case .chromeInspector: return "Element Inspector"
+        case .godotInspector: return "Godot Pack Inspector"
         case .localStorage: return "Local Storage Editor"
         case .encryption: return "Encrypt & Decrypt"
         case .keyCodeViewer: return "Key Code Viewer"
@@ -158,6 +160,8 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .gitignoreGen: return "eye.slash"
         case .hexViewer: return "doc.viewfinder"
         case .chromeExtensionViewer: return "puzzlepiece.extension"
+        case .chromeInspector: return "rectangle.and.text.magnifyingglass"
+        case .godotInspector: return "shippingbox"
         case .localStorage: return "externaldrive.badge.person.crop"
         case .encryption: return "lock.doc"
         case .keyCodeViewer: return "keyboard.badge.eye"
@@ -231,6 +235,8 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .gitignoreGen: return "Build a .gitignore for your project's languages and tools."
         case .hexViewer: return "Look inside any file byte by byte and detect its real type."
         case .chromeExtensionViewer: return "Download any Chrome Web Store extension and read its source code."
+        case .chromeInspector: return "A DevTools-style inspector for your own Chrome tabs: edit the DOM, read the console, run JS, with a floating window and AI help."
+        case .godotInspector: return "Open a Godot game's .pck, list its files and read the GDScript functions inside."
         case .localStorage: return "View and edit your browser's localStorage for any website."
         case .encryption: return "Password-protect text and files with AES-256 encryption."
         case .keyCodeViewer: return "Press any key to see its key code, characters and modifiers."
@@ -304,6 +310,8 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .gitignoreGen: return AnyView(GitignoreView())
         case .hexViewer: return AnyView(HexViewerView())
         case .chromeExtensionViewer: return AnyView(ChromeExtensionViewerView())
+        case .chromeInspector: return AnyView(ChromeInspectorView())
+        case .godotInspector: return AnyView(GodotInspectorView())
         case .localStorage: return AnyView(LocalStorageEditorView())
         case .encryption: return AnyView(EncryptionView())
         case .keyCodeViewer: return AnyView(KeyCodeViewerView())
