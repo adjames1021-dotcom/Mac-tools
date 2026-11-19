@@ -29,7 +29,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // Text & data
     case textTools, jsonFormatter, regexTester, diffChecker, passwordGenerator, hashTool, qrCode, randomGenerator
     // Files & media
-    case pdfEditor, batchRenamer, imageTools, diskUsage, duplicateFinder, saveInspector
+    case pdfEditor, batchRenamer, imageTools, mp3ToFlac, diskUsage, duplicateFinder, saveInspector
     // System
     case systemInfo, processManager, appUninstaller, startupItems, systemToggles
     // Network
@@ -51,7 +51,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
             return .productivity
         case .textTools, .jsonFormatter, .regexTester, .diffChecker, .passwordGenerator, .hashTool, .qrCode, .randomGenerator:
             return .text
-        case .pdfEditor, .batchRenamer, .imageTools, .diskUsage, .duplicateFinder, .saveInspector:
+        case .pdfEditor, .batchRenamer, .imageTools, .mp3ToFlac, .diskUsage, .duplicateFinder, .saveInspector:
             return .files
         case .systemInfo, .processManager, .appUninstaller, .startupItems, .systemToggles:
             return .system
@@ -124,6 +124,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .pdfEditor: return "PDF Editor"
         case .batchRenamer: return "Batch Renamer"
         case .imageTools: return "Image Converter"
+        case .mp3ToFlac: return "MP3 to FLAC"
         case .diskUsage: return "Disk Usage"
         case .duplicateFinder: return "Duplicate Finder"
         case .saveInspector: return "Save Editor"
@@ -202,6 +203,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .pdfEditor: return "doc.richtext"
         case .batchRenamer: return "pencil"
         case .imageTools: return "photo.on.rectangle"
+        case .mp3ToFlac: return "waveform"
         case .diskUsage: return "internaldrive"
         case .duplicateFinder: return "doc.on.doc"
         case .saveInspector: return "doc.badge.gearshape"
@@ -280,6 +282,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .pdfEditor: return "Annotate, sign, highlight, reorder, merge, split, watermark and protect PDFs."
         case .batchRenamer: return "Rename many files at once with preview and undo."
         case .imageTools: return "Convert, resize, rotate images and combine them into a PDF."
+        case .mp3ToFlac: return "Convert MP3s to FLAC, keeping cover art, artist, album and all other tags."
         case .diskUsage: return "Find what is using your disk space."
         case .duplicateFinder: return "Find duplicate files by content."
         case .saveInspector: return "Break down save files and find and edit values like money, in any file type."
@@ -358,6 +361,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .pdfEditor: return AnyView(PDFEditorView())
         case .batchRenamer: return AnyView(BatchRenamerView())
         case .imageTools: return AnyView(ImageToolsView())
+        case .mp3ToFlac: return AnyView(MP3ToFLACView())
         case .diskUsage: return AnyView(DiskUsageView())
         case .duplicateFinder: return AnyView(DuplicateFinderView())
         case .saveInspector: return AnyView(SaveInspectorView())
