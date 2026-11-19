@@ -59,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         Automation.stopAll()
         KeyboardLock.shared.unlock()
+        ProxyClient.shared.disconnect()  // sing-box turns the system proxy back off as it exits
     }
 }
 

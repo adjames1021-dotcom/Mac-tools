@@ -33,7 +33,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // System
     case systemInfo, processManager, appUninstaller, startupItems, systemToggles
     // Network
-    case networkTools, nmap
+    case networkTools, nmap, proxyClient
     // Calculators
     case calculator, unitConverter, baseConverter, timestampConverter
 
@@ -55,7 +55,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
             return .files
         case .systemInfo, .processManager, .appUninstaller, .startupItems, .systemToggles:
             return .system
-        case .networkTools, .nmap:
+        case .networkTools, .nmap, .proxyClient:
             return .network
         case .calculator, .unitConverter, .baseConverter, .timestampConverter:
             return .calculators
@@ -132,6 +132,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .systemToggles: return "System Toggles"
         case .networkTools: return "Network Tools"
         case .nmap: return "Nmap Scanner"
+        case .proxyClient: return "VPN / Proxy Client"
         case .calculator: return "Calculator"
         case .unitConverter: return "Unit Converter"
         case .baseConverter: return "Number Base Converter"
@@ -209,6 +210,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .systemToggles: return "switch.2"
         case .networkTools: return "network"
         case .nmap: return "network.badge.shield.half.filled"
+        case .proxyClient: return "lock.shield"
         case .calculator: return "plus.forwardslash.minus"
         case .unitConverter: return "ruler"
         case .baseConverter: return "number.square"
@@ -286,6 +288,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .systemToggles: return "Hidden files, dark mode, Dock, Finder tweaks and quick actions."
         case .networkTools: return "IP info, ping, DNS, port check, traceroute, speed test…"
         case .nmap: return "Scan hosts and networks with nmap, with every option explained in plain English."
+        case .proxyClient: return "Hiddify-style client: import a subscription or vless/vmess/trojan/ss/hysteria2/tuic links and connect through sing-box."
         case .calculator: return "Scientific expression calculator with history."
         case .unitConverter: return "Convert length, weight, temperature, data and more."
         case .baseConverter: return "Binary, octal, decimal, hex and text bytes."
@@ -363,6 +366,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .systemToggles: return AnyView(SystemTogglesView())
         case .networkTools: return AnyView(NetworkToolsView())
         case .nmap: return AnyView(NmapToolView())
+        case .proxyClient: return AnyView(ProxyClientView())
         case .calculator: return AnyView(CalculatorView())
         case .unitConverter: return AnyView(UnitConverterView())
         case .baseConverter: return AnyView(BaseConverterView())

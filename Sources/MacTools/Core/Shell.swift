@@ -163,9 +163,11 @@ final class CommandRunner: ObservableObject {
         }
     }
 
-    func stop() {
+    /// `wait`: block until the process has exited (e.g. so it can release a port before a restart).
+    func stop(wait: Bool = false) {
         if let p = process, p.isRunning {
             p.terminate()
+            if wait { p.waitUntilExit() }
         }
         process = nil
         running = false
