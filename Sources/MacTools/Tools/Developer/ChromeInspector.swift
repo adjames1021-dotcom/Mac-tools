@@ -474,14 +474,17 @@ enum CDPLauncher {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { waitForQuit(attemptsLeft: attemptsLeft - 1) }
         }
 
+        // A browser is running on this folder. "( |$)" stops "…/Profile 1" from matching "…/Profile 10".
+        func inUse(_ folder: URL) -> Bool {
+            Shell.runSync("/usr/bin/pgrep", ["-f", "--", "--user-data-dir=" + folder.path + "( |$)"]).succeeded
+        }
+
         if freshProfile {
             // Nothing to copy or quit: open the signed-out profile (or reuse it if it's already up).
-            let inUse = Shell.sh("/usr/bin/pgrep -f -- \(NmapCommand.quote("--user-data-dir=" + freshProfileURL(browser).path))").succeeded
-            if inUse { completion(nil) } else { launch() }
+            if inUse(freshProfileURL(browser)) { completion(nil) } else { launch() }
         } else if debugCopy {
             // Don't copy over a debug copy that is open right now; just bring it up.
-            let inUse = Shell.sh("/usr/bin/pgrep -f -- \(NmapCommand.quote("--user-data-dir=" + copyURL.path))").succeeded
-            if inUse { launch(); return }
+            if inUse(copyURL) { launch(); return }
             DispatchQueue.global(qos: .userInitiated).async {
                 let error = syncDebugCopy(browser, profile: profileFolder, into: copyURL)
                 DispatchQueue.main.async {
@@ -741,7 +744,8 @@ final class InspectorSession: ObservableObject {
                 return
             }
             // The port is up but no tab is open (only extension workers): open one to inspect.
-            if case .success = result, attemptsLeft % 4 == 0 {
+            // Not on the first poll: Chrome is often still opening its own startup tab then.
+            if case .success = result, attemptsLeft < 20, attemptsLeft % 4 == 0 {
                 CDPLauncher.openTab(port: self.port)
             }
             if attemptsLeft <= 1 {
@@ -784,6 +788,15 @@ final class InspectorSession: ObservableObject {
         }
         connection.connect()
         self.connection = connection
+        // Drop the previous tab's tree and selection: their nodeIds mean nothing in this tab.
+        root = nil
+        selectedNode = nil
+        outerHTML = ""
+        loadedOuterHTML = ""
+        computedStyles = []
+        aiOutput = ""
+        aiSuggestedHTML = ""
+        godotReport = ""
         connectedTarget = target
         connected = true
         status = "Connected to \(target.displayTitle)."
@@ -803,6 +816,7 @@ final class InspectorSession: ObservableObject {
         connection = nil
         connected = false
         picking = false
+        status = "Disconnected."
     }
 
     // MARK: DOM
@@ -1564,7 +1578,7 @@ struct ChromeInspectorView: View {
                 HStack {
                     Button("Launch & Connect") { session.launchAndDiscover() }
                         .buttonStyle(.borderedProminent)
-                    if (session.selectedBrowser?.isRunning ?? false) && !session.useDebugCopy {
+                    if (session.selectedBrowser?.isRunning ?? false) && !session.useDebugCopy && !session.useFreshProfile {
                         Label("This quits and reopens the browser.", systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundColor(.orange)
                     }
@@ -1789,7 +1803,8 @@ struct InspectorContent: View {
                         }
                     }
                 }
-                .onChange(of: session.console.count) { _ in
+                // Watch the last line, not the count: the count stops changing once the 1000-line cap is hit.
+                .onChange(of: session.console.last?.id) { _ in
                     if let last = session.visibleConsole.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
                 }
             }
