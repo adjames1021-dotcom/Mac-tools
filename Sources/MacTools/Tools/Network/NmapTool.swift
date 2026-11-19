@@ -69,14 +69,13 @@ enum NmapScan: String, CaseIterable, Identifiable {
 }
 
 enum NmapPorts: String, CaseIterable, Identifiable {
-    case `default`, fast, top100, all, custom
+    case `default`, fast, all, custom
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .default: return "Top 1000 ports (default)"
-        case .fast: return "Fast – top 100 ports"
-        case .top100: return "Top 100 ports"
+        case .fast: return "Fast – top 100 ports (-F)"
         case .all: return "All 65,535 ports"
         case .custom: return "Specific ports…"
         }
@@ -87,7 +86,6 @@ enum NmapPorts: String, CaseIterable, Identifiable {
         switch self {
         case .default: return []
         case .fast: return ["-F"]
-        case .top100: return ["--top-ports", "100"]
         case .all: return ["-p-"]
         case .custom:
             let spec = custom.trimmed
@@ -154,8 +152,11 @@ enum NmapCommand {
             if options.osDetection { args.append("-O") }
             if options.aggressive { args.append("-A") }
         }
-        if options.noPing { args.append("-Pn") }
-        if options.traceroute { args.append("--traceroute") }
+        // A list scan sends no packets, so host discovery and traceroute don't apply.
+        if options.scan != .list {
+            if options.noPing { args.append("-Pn") }
+            if options.traceroute { args.append("--traceroute") }
+        }
         if options.reason { args.append("--reason") }
         if options.verbose { args.append("-v") }
         args.append("-T\(min(max(options.timing, 0), 5))")
@@ -169,11 +170,37 @@ enum NmapCommand {
         if options.scan.needsRoot { return true }
         let scansPorts = options.scan != .ping && options.scan != .list
         if scansPorts && (options.osDetection || options.aggressive) { return true }
-        if options.traceroute { return true }
-        // Common raw-packet flags typed into the extra field.
-        let raw = ["-O", "-sS", "-sU", "-sA", "-sF", "-sN", "-sX", "-sO", "-sM", "-sW", "-sY", "--traceroute"]
-        let extra = tokenize(options.extraFlags)
-        return extra.contains { raw.contains($0) }
+        if options.traceroute && options.scan != .list { return true }
+        return tokenize(options.extraFlags).contains(where: isRawPacketFlag)
+    }
+
+    /// Options typed into the extra field that make nmap send raw packets (and so need root).
+    static func isRawPacketFlag(_ token: String) -> Bool {
+        let exact: Set<String> = ["-O", "-A", "-f", "--mtu", "-D", "-S", "--spoof-mac", "--data-length", "--badsum",
+                                  "--traceroute", "--send-eth", "--send-ip", "--ttl", "--ip-options", "-PE", "-PP", "-PM"]
+        let name = token.split(separator: "=", maxSplits: 1).first.map(String.init) ?? token
+        if exact.contains(name) { return true }
+        // -PO / -PY host-discovery probes (with or without a protocol or port list).
+        if token.hasPrefix("-PO") || token.hasPrefix("-PY") { return true }
+        // Scan types, alone or combined (-sS, -sU, -sSU…). -sT, -sV, -sC, -sn and -sL don't need root.
+        if token.hasPrefix("-s"), token.count > 2 {
+            let letters = token.dropFirst(2)
+            if letters.allSatisfy({ $0.isLetter }) && letters.contains(where: { "SUAFNXOMWYZI".contains($0) }) { return true }
+        }
+        return false
+    }
+
+    /// Why the targets can't be scanned as typed, if they can't.
+    static func targetProblem(_ options: NmapOptions) -> String? {
+        let list = targets(options.target)
+        if list.isEmpty { return "Enter at least one target above to run a scan." }
+        if let bad = list.first(where: { $0.hasPrefix("-") }) {
+            return "“\(bad)” looks like an option, not a target. Put options under Extra options."
+        }
+        if options.scan != .ping && options.scan != .list && options.ports == .custom && options.customPorts.trimmed.isEmpty {
+            return "Enter the ports to scan, or pick another port option."
+        }
+        return nil
     }
 
     /// Quotes one token for display or for a shell command line.
@@ -546,7 +573,7 @@ struct NmapToolView: View {
                               systemImage: "play.fill")
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(NmapCommand.targets(options.target).isEmpty)
+                    .disabled(NmapCommand.targetProblem(options) != nil)
                 }
                 if runner.running { ProgressView().controlSize(.small) }
                 Spacer()
@@ -554,9 +581,8 @@ struct NmapToolView: View {
                 Button("Save Output…") { runner.saveOutput() }
                     .disabled(runner.output.isEmpty)
             }
-            if NmapCommand.targets(options.target).isEmpty {
-                Text("Enter at least one target above to run a scan.")
-                    .font(.caption).foregroundStyle(.secondary)
+            if let problem = NmapCommand.targetProblem(options) {
+                Text(problem).font(.caption).foregroundStyle(.secondary)
             }
             OutputBox(text: runner.output, minHeight: 200, maxHeight: 460)
         }
