@@ -574,7 +574,7 @@ struct GodotInspectorView: View {
                 if !aiOutput.isEmpty {
                     Divider()
                     ScrollView {
-                        Text(aiOutput).font(.system(size: 12)).textSelection(.enabled)
+                        Text(InspectorAI.markdown(aiOutput)).font(.system(size: 12)).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(maxHeight: 180)

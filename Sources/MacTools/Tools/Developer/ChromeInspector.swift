@@ -144,6 +144,36 @@ enum DOMParse {
         }
         return nil
     }
+
+    /// backendNodeId survives DOM.getDocument (nodeIds don't), so it finds the same element in a reloaded tree.
+    static func find(backendNodeId: Int, in root: DOMNode) -> DOMNode? {
+        if backendNodeId != 0 && root.backendNodeId == backendNodeId { return root }
+        for child in root.children {
+            if let hit = find(backendNodeId: backendNodeId, in: child) { return hit }
+        }
+        return nil
+    }
+
+    /// Child indexes from the root down to `node`.
+    static func path(of node: DOMNode) -> [Int] {
+        var path: [Int] = []
+        var current = node
+        while let parent = current.parent, let index = parent.children.firstIndex(where: { $0 === current }) {
+            path.insert(index, at: 0)
+            current = parent
+        }
+        return path
+    }
+
+    /// Follows a path from `path(of:)` in another tree, as far as it still exists.
+    static func node(at path: [Int], in root: DOMNode) -> DOMNode? {
+        var current = root
+        for index in path {
+            guard index < current.children.count else { return nil }
+            current = current.children[index]
+        }
+        return current
+    }
 }
 
 // MARK: - CDP connection (callback based, state on the main thread)
@@ -358,16 +388,28 @@ enum CDPLauncher {
         func launch() {
             let config = NSWorkspace.OpenConfiguration()
             config.arguments = arguments
-            config.createsNewApplicationInstance = false
+            // A separate profile runs as a second Chrome next to the user's; otherwise macOS just activates
+            // the running Chrome and drops the debugging flags.
+            config.createsNewApplicationInstance = dedicatedDataDir
             NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, error in
                 DispatchQueue.main.async { completion(error?.localizedDescription) }
             }
         }
 
+        // Chrome can take several seconds to close its windows; relaunching earlier reuses the old process.
+        func waitForQuit(attemptsLeft: Int) {
+            if !browser.isRunning { launch(); return }
+            guard attemptsLeft > 0 else {
+                completion("\(browser.name) didn't quit. Quit it yourself, then try again.")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { waitForQuit(attemptsLeft: attemptsLeft - 1) }
+        }
+
         if browser.isRunning && !dedicatedDataDir {
             // Relaunching the real profile means fully quitting first; the flags are ignored otherwise.
             Shell.appleScript("tell application id \"\(browser.bundleID)\" to quit") { _ in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: launch)
+                waitForQuit(attemptsLeft: 50)
             }
         } else {
             launch()
@@ -449,7 +491,10 @@ final class InspectorSession: ObservableObject {
     @Published var styleFilter = ""
 
     // Console
-    @Published var console: [ConsoleLine] = []
+    @Published var console: [ConsoleLine] = [] {
+        didSet { if console.count > Self.consoleLimit { console.removeFirst(console.count - Self.consoleLimit) } }
+    }
+    static let consoleLimit = 1000
     @Published var evalInput = ""
 
     // Picker
@@ -463,6 +508,8 @@ final class InspectorSession: ObservableObject {
     @Published var aiOutput = ""
     @Published var aiBusy = false
     @Published var aiSuggestedHTML = ""
+    /// What the user wants changed, for "Suggest an Edit".
+    @Published var aiInstruction = ""
 
     var aiModel: String { InspectorAI.model(for: aiProvider) }
 
@@ -480,7 +527,12 @@ final class InspectorSession: ObservableObject {
             user += "\nKey computed styles: \(styleText)\n"
         }
         if !recentConsole.isEmpty { user += "\nRecent console output:\n\(recentConsole)\n" }
-        if editMode { user += "\nEdit requested. Return the full new outer HTML for this element." }
+        if editMode {
+            let wanted = aiInstruction.trimmed
+            user += wanted.isEmpty
+                ? "\nEdit requested: improve this element (clarity, accessibility, valid markup). Return the full new outer HTML for this element."
+                : "\nEdit requested: \(wanted)\nReturn the full new outer HTML for this element."
+        }
         aiBusy = true
         aiOutput = ""
         aiSuggestedHTML = ""
@@ -592,7 +644,7 @@ final class InspectorSession: ObservableObject {
         connection.onEvent = { [weak self] method, params in self?.handleEvent(method, params) }
         connection.onClose = { [weak self] in
             self?.connected = false
-            self?.status = "The tab closed or navigated away. Reconnect to continue."
+            self?.status = "The connection to the tab closed (the tab or browser was closed). Reconnect to continue."
         }
         connection.connect()
         self.connection = connection
@@ -619,15 +671,31 @@ final class InspectorSession: ObservableObject {
 
     // MARK: DOM
 
-    func loadDocument() {
+    /// Reloads the tree. Every old nodeId is invalid afterwards, so the selection moves to the same
+    /// element in the new tree (by backendNodeId, else by position) or is cleared.
+    func loadDocument(then done: (() -> Void)? = nil) {
+        let previous = selectedNode
+        let previousPath = previous.map(DOMParse.path(of:))
         connection?.send("DOM.getDocument", ["depth": -1, "pierce": true]) { [weak self] result in
             guard let self = self else { return }
             switch result {
             case .success(let value):
                 if let rootDict = value["root"] as? [String: Any] {
-                    self.root = DOMParse.node(from: rootDict)
-                    self.status = "Document loaded."
+                    let root = DOMParse.node(from: rootDict)
+                    self.root = root
+                    if let previous = previous, self.selectedNode === previous {
+                        if let same = DOMParse.find(backendNodeId: previous.backendNodeId, in: root)
+                            ?? previousPath.flatMap({ DOMParse.node(at: $0, in: root) }), same.nodeType != 9 {
+                            self.select(same)
+                        } else {
+                            self.selectedNode = nil
+                            self.outerHTML = ""
+                            self.loadedOuterHTML = ""
+                            self.computedStyles = []
+                        }
+                    }
                 }
+                done?()
             case .failure(let error):
                 self.status = error.localizedDescription
             }
@@ -693,16 +761,23 @@ final class InspectorSession: ObservableObject {
 
     func setAttribute(_ name: String, _ value: String) {
         guard let node = selectedNode, let connection = connection, !name.isEmpty else { return }
+        // Shown at once (the focused field re-reads it right away), put back if Chrome refuses.
+        let before = node.attributes
+        if let index = node.attributes.firstIndex(where: { $0.name == name }) {
+            node.attributes[index].value = value
+        } else {
+            node.attributes.append((name, value))
+        }
+        objectWillChange.send()
         connection.send("DOM.setAttributeValue", ["nodeId": node.nodeId, "name": name, "value": value]) { [weak self] result in
-            if case .success = result {
-                if let index = node.attributes.firstIndex(where: { $0.name == name }) {
-                    node.attributes[index].value = value
-                } else {
-                    node.attributes.append((name, value))
-                }
-                self?.objectWillChange.send()
+            switch result {
+            case .success:
                 self?.status = "Set \(name)=\"\(value)\"."
                 self?.refreshOuterHTML()
+            case .failure(let error):
+                node.attributes = before
+                self?.objectWillChange.send()
+                self?.status = "Couldn't set \(name): \(error.localizedDescription)"
             }
         }
     }
@@ -899,7 +974,9 @@ final class InspectorSession: ObservableObject {
         case "Runtime.consoleAPICalled":
             let type = (params["type"] as? String) ?? "log"
             let args = (params["args"] as? [[String: Any]]) ?? []
-            let text = args.map { RemoteObjectRender.describe($0) }.joined(separator: " ")
+            // Like DevTools, logged strings print without quotes.
+            let text = args.map { ($0["type"] as? String) == "string" ? (($0["value"] as? String) ?? "") : RemoteObjectRender.describe($0) }
+                .joined(separator: " ")
             let kind: ConsoleLine.Kind = (type == "error") ? .error : (type == "warning" || type == "warn") ? .warning : .log
             console.append(ConsoleLine(kind: kind, text: text.isEmpty ? type : text))
         case "Runtime.exceptionThrown":
@@ -936,19 +1013,21 @@ final class InspectorSession: ObservableObject {
     }
 
     private func pickResolved(_ backendNodeId: Int) {
-        connection?.send("DOM.pushNodesByBackendIdsToFrontend", ["backendNodeIds": [backendNodeId]]) { [weak self] result in
-            guard let self = self, case .success(let value) = result,
-                  let ids = value["nodeIds"] as? [Int], let nodeId = ids.first else { return }
-            // Turn off inspect mode and select the picked node.
-            self.picking = false
-            self.connection?.send("Overlay.setInspectMode", ["mode": "none", "highlightConfig": [:]])
-            if let root = self.root, let node = DOMParse.find(nodeId, in: root) {
+        // Turn off inspect mode and select the picked node.
+        picking = false
+        status = ""
+        connection?.send("Overlay.setInspectMode", ["mode": "none", "highlightConfig": [:]])
+        if let root = root, let node = DOMParse.find(backendNodeId: backendNodeId, in: root) {
+            select(node)
+            return
+        }
+        // The page changed since the tree was read; reload it and look again.
+        loadDocument { [weak self] in
+            guard let self = self else { return }
+            if let root = self.root, let node = DOMParse.find(backendNodeId: backendNodeId, in: root) {
                 self.select(node)
             } else {
-                self.loadDocument()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    if let root = self.root, let node = DOMParse.find(nodeId, in: root) { self.select(node) }
-                }
+                self.status = "Couldn't find the picked element in the page's DOM."
             }
         }
     }
@@ -1123,6 +1202,12 @@ enum InspectorAI {
         return (error["message"] as? String) ?? ""
     }
 
+    /// Renders the model's inline markdown (`code`, **bold**) while keeping its line breaks.
+    static func markdown(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+
     /// Pulls the first fenced code block out of a model answer, for an "Apply HTML" button.
     static func firstCodeBlock(in text: String) -> String? {
         guard let open = text.range(of: "```") else { return nil }
@@ -1228,7 +1313,7 @@ struct ChromeInspectorView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Text("Debug port")
-                    TextField("9222", value: $session.port, format: .number)
+                    TextField("9222", value: $session.port, format: .number.grouping(.never))
                         .frame(width: 80).textFieldStyle(.roundedBorder)
                     Button("Find Tabs") { session.discover() }
                     if session.busy { ProgressView().controlSize(.small) }
@@ -1366,6 +1451,7 @@ struct InspectorContent: View {
             if let node = session.selectedNode {
                 if node.isElement {
                     AttributesEditor(session: session, node: node)
+                        .id(node.id) // fresh drafts for each element
                     Divider()
                 }
                 Text("Outer HTML").font(.caption.bold()).foregroundStyle(.secondary)
@@ -1421,15 +1507,18 @@ struct InspectorContent: View {
     private var aiPane: some View {
         VStack(alignment: .leading, spacing: 6) {
             AIProviderBar(provider: $session.aiProvider)
+            TextField("Edit to make, e.g. “make the heading blue and centred” (optional)", text: $session.aiInstruction)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { if canAsk { session.askAI(editMode: true) } }
             HStack {
                 Button("Explain Element") { session.askAI(editMode: false) }
                 Button("Suggest an Edit") { session.askAI(editMode: true) }
                 if session.aiBusy { ProgressView().controlSize(.small) }
                 Spacer()
             }
-            .disabled(session.selectedNode == nil || session.aiBusy || !planner.hasKey(session.aiProvider))
+            .disabled(!canAsk)
             ScrollView {
-                Text(session.aiOutput.isEmpty ? "Ask the model to explain or rewrite the selected element." : session.aiOutput)
+                Text(session.aiOutput.isEmpty ? AttributedString("Ask the model to explain or rewrite the selected element.") : InspectorAI.markdown(session.aiOutput))
                     .font(.system(size: 12))
                     .foregroundStyle(session.aiOutput.isEmpty ? .secondary : .primary)
                     .textSelection(.enabled)
@@ -1442,6 +1531,8 @@ struct InspectorContent: View {
         }
         .padding(8)
     }
+
+    private var canAsk: Bool { session.selectedNode != nil && !session.aiBusy && planner.hasKey(session.aiProvider) }
 
     // Godot
     private var godotPane: some View {
@@ -1528,17 +1619,18 @@ struct DOMRow: View {
 
     var body: some View {
         let selected = session.selectedNode === node
-        HStack(spacing: 4) {
+        // A Button (not onTapGesture) so the row can be selected with VoiceOver and the keyboard.
+        Button { session.select(node) } label: {
             Text(node.summary)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(node.isElement ? (selected ? .white : .primary) : .secondary)
                 .lineLimit(1)
+                .padding(.vertical, 1).padding(.horizontal, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 4).fill(selected ? Color.accentColor : Color.clear))
+                .contentShape(Rectangle())
         }
-        .padding(.vertical, 1).padding(.horizontal, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 4).fill(selected ? Color.accentColor : Color.clear))
-        .contentShape(Rectangle())
-        .onTapGesture { session.select(node) }
+        .buttonStyle(.plain)
         .onHover { hovering in if hovering && session.connected { session.highlight(node) } }
     }
 }
@@ -1549,6 +1641,7 @@ struct AttributesEditor: View {
     @ObservedObject var node: DOMNode
     @State private var newName = ""
     @State private var newValue = ""
+    @State private var drafts: [String: String] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -1556,10 +1649,17 @@ struct AttributesEditor: View {
             ForEach(Array(node.attributes.enumerated()), id: \.offset) { _, attribute in
                 HStack(spacing: 4) {
                     Text(attribute.name).font(.system(size: 11, design: .monospaced)).foregroundColor(.accentColor)
+                    // Edits are local until Return, so typing doesn't send one CDP command per keystroke.
                     TextField("value", text: Binding(
-                        get: { attribute.value },
-                        set: { session.setAttribute(attribute.name, $0) }
+                        get: { drafts[attribute.name] ?? attribute.value },
+                        set: { drafts[attribute.name] = $0 }
                     ))
+                    .onSubmit {
+                        if let value = drafts.removeValue(forKey: attribute.name), value != attribute.value {
+                            session.setAttribute(attribute.name, value)
+                        }
+                    }
+                    .help("Press Return to apply")
                     .font(.system(size: 11, design: .monospaced))
                     .textFieldStyle(.roundedBorder)
                     Button { session.removeAttribute(attribute.name) } label: { Image(systemName: "minus.circle") }

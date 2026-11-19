@@ -217,8 +217,12 @@ enum NmapCommand {
     }
 
     /// A single shell command line (used when a scan needs administrator rights).
-    static func shellLine(nmapPath: String, options: NmapOptions) -> String {
-        (([nmapPath] + arguments(options)).map(quote)).joined(separator: " ") + " 2>&1"
+    /// `do shell script` only returns output when it finishes and keeps running if osascript is killed,
+    /// so the root shell appends to `log` (tailed by the app) and stops nmap when `stopFile` appears.
+    static func shellLine(nmapPath: String, options: NmapOptions, log: String, stopFile: String) -> String {
+        let command = (([nmapPath] + arguments(options)).map(quote)).joined(separator: " ")
+        return "\(command) >> \(quote(log)) 2>&1 & p=$!; "
+            + "while kill -0 $p 2>/dev/null; do [ -e \(quote(stopFile)) ] && kill -INT $p; sleep 0.3; done; wait $p"
     }
 }
 
@@ -330,9 +334,19 @@ final class NmapRunner: ObservableObject {
         ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
+    private var stopFile: URL?
+
     func stop() {
-        process?.terminate()
-        process = nil
+        guard let process = process else { return }
+        if let stopFile = stopFile {
+            // The scan runs as root, so killing osascript alone would leave nmap running: its shell
+            // stops nmap when this file appears. Killing osascript also closes a pending password prompt.
+            FileManager.default.createFile(atPath: stopFile.path, contents: nil)
+        }
+        process.terminate()
+        append("\n[stopped]\n")
+        stopFile = nil
+        self.process = nil
         running = false
     }
 
@@ -345,22 +359,35 @@ final class NmapRunner: ObservableObject {
         let asAdmin = NmapCommand.needsRoot(options)
         let executable: String
         let args: [String]
+        var log: URL?
         if asAdmin {
             // osascript asks for the password and runs the scan with administrator rights.
-            let line = NmapCommand.shellLine(nmapPath: nmap, options: options)
+            let base = FileManager.default.temporaryDirectory.appendingPathComponent("mactools-nmap-\(UUID().uuidString)")
+            let logURL = base.appendingPathExtension("log")
+            let stopURL = base.appendingPathExtension("stop")
+            // Created by us so the app can read what root appends to it.
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            let line = NmapCommand.shellLine(nmapPath: nmap, options: options, log: logURL.path, stopFile: stopURL.path)
             let script = "do shell script \"\(line.appleScriptEscaped)\" with administrator privileges"
             executable = "/usr/bin/osascript"
             args = ["-e", script]
             output = NmapCommand.display(options) + "\n(asks for your administrator password…)\n\n"
+            log = logURL
+            stopFile = stopURL
         } else {
             executable = nmap
             args = NmapCommand.arguments(options)
             output = NmapCommand.display(options) + "\n\n"
         }
-        launch(executable: executable, args: args)
+        launch(executable: executable, args: args, log: log)
     }
 
-    private func launch(executable: String, args: [String]) {
+    private func launch(executable: String, args: [String], log: URL?) {
+        // Live output of an admin scan comes from its log file.
+        var logHandle = log.flatMap { try? FileHandle(forReadingFrom: $0) }
+        let timer = logHandle == nil ? nil : Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+            if let data = logHandle?.availableData, !data.isEmpty { self?.append(String(decoding: data, as: UTF8.self)) }
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = args
@@ -378,10 +405,23 @@ final class NmapRunner: ObservableObject {
             let status = p.terminationStatus
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 handle.readabilityHandler = nil
-                guard let self = self else { return }
+                timer?.invalidate()
+                let rest = logHandle?.readDataToEndOfFile() ?? Data()
+                try? logHandle?.close()
+                logHandle = nil
+                if let log = log {
+                    try? FileManager.default.removeItem(at: log)
+                    // Kept a moment so the root shell (polling every 0.3 s) still sees a Stop.
+                    let stop = log.deletingPathExtension().appendingPathExtension("stop")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { try? FileManager.default.removeItem(at: stop) }
+                }
+                guard let self = self, self.process === p else { return }
+                if !rest.isEmpty { self.append(String(decoding: rest, as: UTF8.self)) }
                 if status != 0 { self.append("\n[nmap exited with code \(status)]\n") }
                 else { self.append("\n[done]\n") }
-                if self.process === p { self.running = false; self.process = nil }
+                self.running = false
+                self.process = nil
+                self.stopFile = nil
             }
         }
         do {
@@ -624,6 +664,7 @@ struct NmapToolView: View {
         let query = refSearch.trimmed.lowercased()
         guard !query.isEmpty else { return NmapReference.sections }
         return NmapReference.sections.compactMap { section in
+            if section.title.lowercased().contains(query) { return section }
             let items = section.items.filter {
                 $0.flag.lowercased().contains(query) || $0.detail.lowercased().contains(query)
             }
