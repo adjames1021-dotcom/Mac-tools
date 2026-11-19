@@ -25,7 +25,7 @@ Prefer the command line?
 ```bash
 ./build.sh            # build (skipped if nothing changed)
 ./build.sh --install  # build and copy MacTools.app to /Applications
-open build/MacTools.app
+open build.noindex/MacTools.app
 ```
 
 Requirements: macOS 13 Ventura or newer, plus Xcode or the Command Line Tools (`xcode-select --install`).
@@ -193,7 +193,7 @@ School To-Do keeps its list in `school-todo.json`, your check-offs in `school-to
 
 ```
 Launch MacTools.command   double-click launcher (builds, opens the app, closes Terminal)
-build.sh                  compiles Sources/ into build/MacTools.app with swiftc
+build.sh                  compiles Sources/ into build.noindex/MacTools.app with swiftc
 update.conf               which GitHub repository/branch the in-app updater follows
 VERSION                   the version number (2.2, 2.3 …) shown in the app
 Resources/Info.plist      app bundle metadata

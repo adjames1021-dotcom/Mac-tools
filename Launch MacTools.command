@@ -23,7 +23,7 @@ if [[ -d "/Applications/MacTools.app" ]]; then
 elif [[ -d "$HOME/Applications/MacTools.app" ]]; then
   open "$HOME/Applications/MacTools.app"
 else
-  open "build/MacTools.app"
+  open "build.noindex/MacTools.app"
 fi
 
 # Close this Terminal window (and quit Terminal if nothing else is open).
