@@ -424,18 +424,30 @@ enum CDPLauncher {
         return result.succeeded ? nil : "Couldn't copy the profile: \(result.combined)"
     }
 
+    /// A fresh, empty user-data folder with no account bound to the browser. Signing into a managed
+    /// account's websites here doesn't pull down its cloud policy, so a school's "developer tools off"
+    /// rule (which only applies to the managed browser profile) doesn't block the inspector.
+    static func freshProfileURL(_ browser: DebugBrowser) -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("MacTools/InspectorProfiles/\(browser.bundleID)/__signed_out__")
+    }
+
     /// Quits the browser (if running), then relaunches it for the chosen profile with the debug port open.
     /// `debugCopy` runs a copy of the profile in its own folder instead: Chrome 136+ only allows remote
     /// debugging outside its default folder, and the user's normal browser keeps running untouched.
+    /// `freshProfile` opens an empty, signed-out profile for when the chosen one is locked down by policy.
     static func relaunch(_ browser: DebugBrowser, profile: String, port: Int, debugCopy: Bool,
-                         completion: @escaping (String?) -> Void) {
+                         freshProfile: Bool = false, completion: @escaping (String?) -> Void) {
         guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: browser.bundleID) else {
             completion("\(browser.name) isn't installed."); return
         }
         var arguments = ["--remote-debugging-port=\(port)", "--remote-debugging-address=127.0.0.1"]
         let profileFolder = profile.isEmpty ? "Default" : profile
         let copyURL = debugCopyURL(browser, profile: profileFolder)
-        if debugCopy {
+        if freshProfile {
+            try? FileManager.default.createDirectory(at: freshProfileURL(browser), withIntermediateDirectories: true)
+            arguments += ["--user-data-dir=\(freshProfileURL(browser).path)", "--no-first-run", "--no-default-browser-check"]
+        } else if debugCopy {
             arguments += ["--user-data-dir=\(copyURL.path)", "--profile-directory=\(profileFolder)"]
         } else if !profile.isEmpty {
             arguments.append("--profile-directory=\(profile)")
@@ -446,7 +458,7 @@ enum CDPLauncher {
             config.arguments = arguments
             // A separate profile runs as a second Chrome next to the user's; otherwise macOS just activates
             // the running Chrome and drops the debugging flags.
-            config.createsNewApplicationInstance = debugCopy
+            config.createsNewApplicationInstance = debugCopy || freshProfile
             NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, error in
                 DispatchQueue.main.async { completion(error?.localizedDescription) }
             }
@@ -462,7 +474,11 @@ enum CDPLauncher {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { waitForQuit(attemptsLeft: attemptsLeft - 1) }
         }
 
-        if debugCopy {
+        if freshProfile {
+            // Nothing to copy or quit: open the signed-out profile (or reuse it if it's already up).
+            let inUse = Shell.sh("/usr/bin/pgrep -f -- \(NmapCommand.quote("--user-data-dir=" + freshProfileURL(browser).path))").succeeded
+            if inUse { completion(nil) } else { launch() }
+        } else if debugCopy {
             // Don't copy over a debug copy that is open right now; just bring it up.
             let inUse = Shell.sh("/usr/bin/pgrep -f -- \(NmapCommand.quote("--user-data-dir=" + copyURL.path))").succeeded
             if inUse { launch(); return }
@@ -546,6 +562,9 @@ final class InspectorSession: ObservableObject {
     @Published var useDebugCopy = UserDefaults.standard.object(forKey: "inspectorUseDebugCopy") as? Bool ?? true {
         didSet { UserDefaults.standard.set(useDebugCopy, forKey: "inspectorUseDebugCopy") }
     }
+    /// Open an empty, signed-out profile instead of copying the chosen one — the way around a school
+    /// or company policy that turns off developer tools for the managed profile.
+    @Published var useFreshProfile = false
 
     func profileLabel(_ folder: String) -> String {
         guard let name = profileNames[folder], name != folder else { return folder }
@@ -695,10 +714,12 @@ final class InspectorSession: ObservableObject {
     func launchAndDiscover() {
         guard let browser = selectedBrowser else { return }
         busy = true
-        status = useDebugCopy
+        status = useFreshProfile
+            ? "Opening a fresh, signed-out \(browser.name)… sign into the sites you need in it, and decline any “your organization will manage this profile” prompt."
+            : useDebugCopy
             ? "Copying your “\(profileNames[selectedProfile] ?? selectedProfile)” profile and opening it with debugging (the first copy can take a minute)…"
             : "Launching \(browser.name)…"
-        CDPLauncher.relaunch(browser, profile: selectedProfile, port: port, debugCopy: useDebugCopy) { [weak self] error in
+        CDPLauncher.relaunch(browser, profile: selectedProfile, port: port, debugCopy: useDebugCopy, freshProfile: useFreshProfile) { [weak self] error in
             guard let self = self else { return }
             if let error = error {
                 self.busy = false
@@ -1519,19 +1540,27 @@ struct ChromeInspectorView: View {
                         ForEach(session.browsers) { browser in Text(browser.name).tag(Optional(browser)) }
                     }
                     .frame(maxWidth: 220)
-                    if !session.profiles.isEmpty {
+                    if !session.profiles.isEmpty && !session.useFreshProfile {
                         Picker("Profile", selection: $session.selectedProfile) {
                             ForEach(session.profiles, id: \.self) { Text(session.profileLabel($0)).tag($0) }
                         }
                         .frame(maxWidth: 280)
                     }
                 }
-                Toggle("Open a debug copy of the profile (needed on Chrome 136+)", isOn: $session.useDebugCopy)
+                if !session.useFreshProfile {
+                    Toggle("Open a debug copy of the profile (needed on Chrome 136+)", isOn: $session.useDebugCopy)
+                        .font(.caption)
+                    Text(session.useDebugCopy
+                         ? "Copies the profile's bookmarks, sign-ins and extensions into a separate MacTools folder and opens it as a second Chrome, so your normal Chrome keeps running. The copy is refreshed each launch; changes made in it aren't saved back, and some sites (like Google) may ask you to sign in again."
+                         : "Quits the browser and reopens your real profile with debugging. Works on Edge, Brave and older Chrome; Chrome 136+ ignores it.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Toggle("My profile has developer tools turned off (school / work account)", isOn: $session.useFreshProfile)
                     .font(.caption)
-                Text(session.useDebugCopy
-                     ? "Copies the profile's bookmarks, sign-ins and extensions into a separate MacTools folder and opens it as a second Chrome, so your normal Chrome keeps running. The copy is refreshed each launch; changes made in it aren't saved back, and some sites (like Google) may ask you to sign in again."
-                     : "Quits the browser and reopens your real profile with debugging. Works on Edge, Brave and older Chrome; Chrome 136+ ignores it.")
-                    .font(.caption2).foregroundStyle(.secondary)
+                if session.useFreshProfile {
+                    Text("Opens a fresh, empty Chrome with no account attached, so the policy that disables developer tools doesn't apply. Sign into the sites you need inside it (your logins stay for next time). Important: if Chrome asks to “manage this profile”, click Cancel — accepting it re-applies the block.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 HStack {
                     Button("Launch & Connect") { session.launchAndDiscover() }
                         .buttonStyle(.borderedProminent)
