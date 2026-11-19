@@ -82,6 +82,7 @@ enum UpdateError: Error, LocalizedError {
     case download(Int)
     case unzip(String)
     case buildFailed
+    case noRelease
 
     var errorDescription: String? {
         switch self {
@@ -89,6 +90,7 @@ enum UpdateError: Error, LocalizedError {
         case .download(let code): return "Downloading the update failed (HTTP \(code))."
         case .unzip(let detail): return "Couldn't unpack the update. \(detail)"
         case .buildFailed: return "Building the new version failed – see the build log below. Your current version still works."
+        case .noRelease: return "There's no ready-made version on GitHub yet. Use Build & Install instead."
         }
     }
 }
@@ -307,6 +309,80 @@ final class UpdateManager: ObservableObject {
         }
     }
 
+    /// Name of the zipped app attached to each GitHub release (see Scripts/publish-release.sh).
+    static let releaseAsset = "MacTools.zip"
+
+    /// Downloads the ready-made app from the newest GitHub release and swaps it in – no compiling.
+    func installDownload() {
+        if phase == .installing || phase == .checking { return }
+        phase = .installing
+        log = ""
+        step = "Downloading the ready-made version…"
+        let repoName = repo.trimmed
+        let appPath = Bundle.main.bundlePath
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let commit = try self.downloadRelease(repo: repoName, replacing: appPath)
+                DispatchQueue.main.async {
+                    self.installedCommit = commit.isEmpty ? nil : commit
+                    self.newCommits = []
+                    self.phase = .ready
+                    self.step = "Update installed. Restart MacTools to start using it."
+                    Shell.notify("MacTools has been updated. Restart it to use the new version.")
+                }
+            } catch {
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                DispatchQueue.main.async {
+                    self.phase = .failed(message)
+                    self.step = ""
+                }
+            }
+        }
+    }
+
+    /// Fetches the latest release's MacTools.zip, unpacks it and replaces the app. Returns the new app's commit.
+    private func downloadRelease(repo: String, replacing appPath: String) throws -> String {
+        let fm = FileManager.default
+        guard repo.split(separator: "/").count == 2,
+              let api = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") else { throw UpdateError.badRepo }
+        appendLog("Looking up the latest release of \(repo)…\n")
+        let json = try download(api)
+        defer { try? fm.removeItem(at: json) }
+        guard let data = try? Data(contentsOf: json),
+              let release = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let assets = release["assets"] as? [[String: Any]],
+              let asset = assets.first(where: { $0["name"] as? String == Self.releaseAsset }),
+              let link = asset["browser_download_url"] as? String, let url = URL(string: link),
+              url.host == "github.com" || url.host?.hasSuffix(".githubusercontent.com") == true else {
+            throw UpdateError.noRelease
+        }
+        appendLog("Downloading \(release["tag_name"] as? String ?? "") from \(link)\n")
+        let zip = try download(url)
+        defer { try? fm.removeItem(at: zip) }
+
+        let staging = DataStore.directory.appendingPathComponent("Download.new", isDirectory: true)
+        try? fm.removeItem(at: staging)
+        defer { try? fm.removeItem(at: staging) }
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        let unzip = Shell.runSync("/usr/bin/ditto", ["-x", "-k", zip.path, staging.path])
+        guard unzip.succeeded else { throw UpdateError.unzip(unzip.combined) }
+        let app = staging.appendingPathComponent("MacTools.app")
+        // Only ever swap in MacTools itself, with an intact signature.
+        guard let bundle = Bundle(url: app), bundle.bundleIdentifier == Bundle.main.bundleIdentifier else {
+            throw UpdateError.unzip("The download didn't contain MacTools.")
+        }
+        let verify = Shell.runSync("/usr/bin/codesign", ["--verify", "--deep", app.path])
+        guard verify.succeeded else { throw UpdateError.unzip("The downloaded app's signature is broken. \(verify.combined)") }
+        _ = Shell.runSync("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app.path])
+        // Same swap as build.sh: copy next to the app, then replace it.
+        let script = "rm -rf \"$1.new\" && /usr/bin/ditto \"$0\" \"$1.new\" && rm -rf \"$1\" && mv \"$1.new\" \"$1\""
+        let swap = Shell.runSync("/bin/sh", ["-c", script, app.path, appPath])
+        guard swap.succeeded else { throw UpdateError.unzip("Couldn't replace the app: \(swap.combined)") }
+        appendLog("Installed to \(appPath)\n")
+        return (bundle.infoDictionary?["MTCommit"] as? String ?? "").trimmed
+    }
+
     private func setStep(_ text: String) {
         DispatchQueue.main.async { self.step = text }
     }
@@ -501,9 +577,19 @@ struct UpdatesView: View {
                         Button {
                             updater.install()
                         } label: {
-                            Label("Install Update", systemImage: "arrow.down.circle.fill")
+                            Label("Build & Install", systemImage: "hammer.circle.fill")
                         }
                         .buttonStyle(.borderedProminent)
+                        .help("Downloads the source code and compiles it on this Mac (needs the Command Line Tools)")
+                    }
+                    if updater.phase != .ready {
+                        Button {
+                            updater.installDownload()
+                        } label: {
+                            Label("Download Ready-Made", systemImage: "arrow.down.circle.fill")
+                        }
+                        .disabled(updater.phase == .checking || updater.isInstalling)
+                        .help("Downloads the already-built app from the latest GitHub release – no compiling, takes seconds")
                     }
                     if updater.phase == .ready {
                         Button {
@@ -522,7 +608,7 @@ struct UpdatesView: View {
                 }
                 Toggle("Check for updates automatically", isOn: $updater.autoCheck)
                 Toggle("Install updates automatically in the background", isOn: $updater.autoInstall)
-                Text("Updates are downloaded from GitHub and built on this Mac with the Command Line Tools, then MacTools swaps itself in place. Your settings, macros and permissions are kept.")
+                Text("Build & Install downloads the newest code from GitHub and compiles it on this Mac. Download Ready-Made grabs the already-built app from the latest GitHub release instead – quicker, but it can be behind the newest code. Either way MacTools swaps itself in place and keeps your settings, macros and permissions.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("Version numbers go up by 0.1 for each small update (2.2 → 2.3) and to the next whole number for a full update (2.x → 3.0).")
