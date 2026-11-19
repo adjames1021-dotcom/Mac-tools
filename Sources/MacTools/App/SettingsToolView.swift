@@ -127,3 +127,31 @@ struct SettingsToolView: View {
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }
+
+struct CreditsView: View {
+    private let people = [
+        (name: "lilbean_uwu", role: "Main Developer", icon: "hammer.fill"),
+        (name: "frankycat8", role: "Head Bug Tester", icon: "ladybug.fill"),
+    ]
+
+    var body: some View {
+        ToolPage(tool: .credits) {
+            Card(title: "Credits", icon: "person.2") {
+                ForEach(people, id: \.name) { person in
+                    HStack(spacing: 12) {
+                        Image(systemName: person.icon)
+                            .font(.title2)
+                            .foregroundColor(.accentColor)
+                            .frame(width: 32)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(person.name).font(.title3.bold())
+                            Text(person.role).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+    }
+}

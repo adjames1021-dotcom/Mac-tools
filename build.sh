@@ -63,6 +63,12 @@ install_app() {
     dest="$HOME/Applications"
     mkdir -p "$dest"
   fi
+  # Already installed and identical: don't quit a running MacTools for nothing.
+  if cmp -s "$APP/Contents/MacOS/$APP_NAME" "$dest/$APP_NAME.app/Contents/MacOS/$APP_NAME" &&
+     cmp -s "$APP/Contents/Info.plist" "$dest/$APP_NAME.app/Contents/Info.plist"; then
+    echo "📦 $dest/$APP_NAME.app is up to date."
+    return 0
+  fi
   quit_running_app
   copy_app_to "$dest/$APP_NAME.app"
   echo "📦 Installed to $dest/$APP_NAME.app"

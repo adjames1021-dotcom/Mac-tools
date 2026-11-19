@@ -9,15 +9,19 @@ clear
 echo "🧰  MacTools"
 echo
 
-if ! /bin/bash ./build.sh; then
+# Installs into /Applications (or ~/Applications), the copy the Dock icon and the in-app updater use,
+# so a MacTools kept in the Dock always opens the latest build.
+if ! /bin/bash ./build.sh --install; then
   echo
   echo "MacTools couldn't be built – see the messages above."
   read -r -p "Press Return to close this window… " _
   exit 1
 fi
 
-if [[ -d "/Applications/MacTools.app" && "${MACTOOLS_USE_INSTALLED:-0}" == "1" ]]; then
+if [[ -d "/Applications/MacTools.app" ]]; then
   open "/Applications/MacTools.app"
+elif [[ -d "$HOME/Applications/MacTools.app" ]]; then
+  open "$HOME/Applications/MacTools.app"
 else
   open "build/MacTools.app"
 fi

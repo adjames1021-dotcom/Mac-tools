@@ -166,8 +166,6 @@ final class HTMLGameHost: NSObject, ObservableObject {
     @Published private(set) var liveStatus = ""
     @Published private(set) var liveScanning = false
     @Published private(set) var frozen: Set<String> = []
-    /// Every match of the last search (not just the ones shown), for narrowing down.
-    private var livePaths: [[String]] = []
 
     private(set) lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -415,23 +413,58 @@ final class HTMLGameHost: NSObject, ObservableObject {
 
     // MARK: Live values
 
-    /// Searches the running game's own variables (everything it put on `window`, followed down into objects and
-    /// arrays) for a number. With `narrow`, only re-checks the previous matches – the way to home in on the one
-    /// variable that holds, say, your cookies.
-    private static let liveScanScript = """
-    const matches = (v) => {
-      let n = v;
-      if (typeof v === 'string') { if (v.length > 40 || v.trim() === '') return false; n = Number(v); }
-      if (typeof n !== 'number' || !isFinite(n)) return false;
-      if (n === target) return true;
-      return close && (Math.floor(n) === Math.floor(target) || Math.abs(n - target) <= Math.max(1, Math.abs(target) * 0.01));
+    /// How a search for an unknown value narrows: by the typed value, or by how the value moved since the last check.
+    enum LiveCompare: String { case equal, increased, decreased, changed, unchanged }
+
+    /// Finds and changes a game's top-level variables: properties of `window`, and also `let`/`const`/`class`
+    /// declarations in its scripts, which never appear on `window` but can be reached by name with a global eval.
+    private static let liveResolver = """
+    const __mtRoot = (k) => {
+      if (k in window) return window[k];
+      if (!/^[A-Za-z_$][\\w$]*$/.test(k)) return undefined;
+      try { return (0, eval)(k); } catch (e) { return undefined; }
     };
-    const get = (path) => { let o = window; for (const k of path) { if (o === null || o === undefined) return undefined; try { o = o[k]; } catch (e) { return undefined; } } return o; };
+    const get = (path) => { let o = __mtRoot(path[0]); for (let i = 1; i < path.length; i++) { if (o === null || o === undefined) return undefined; try { o = o[path[i]]; } catch (e) { return undefined; } } return o; };
+    const put = (path, value) => {
+      if (path.length === 1 && !(path[0] in window)) { window.__mtValue = value; (0, eval)(path[0] + ' = window.__mtValue'); return; }
+      const o = path.length === 1 ? window : get(path.slice(0, -1));
+      o[path[path.length - 1]] = value;
+    };
     const pack = (path) => { const v = get(path); return { path, value: typeof v === 'string' ? v : String(v), isString: typeof v === 'string' }; };
+
+    """
+
+    /// Searches the running game's own variables (everything it put on `window` or declared at the top of its
+    /// scripts, followed down into objects and arrays) for a number. The matches stay in the page, so Narrow Down
+    /// re-checks them: by the new value, or – for an unknown value – by whether it went up, down or stayed.
+    private static let liveScanScript = liveResolver + """
+    const unknown = mode === 'unknown';
+    const num = (v) => {
+      if (typeof v === 'number') return isFinite(v) ? v : null;
+      if (unknown || typeof v !== 'string' || v.length > 40 || v.trim() === '') return null;
+      const n = Number(v);
+      return isFinite(n) ? n : null;
+    };
+    const hits = (n) => n === target || (close && (Math.floor(n) === Math.floor(target) || Math.abs(n - target) <= Math.max(1, Math.abs(target) * 0.01)));
+    const finish = (paths, values, visited) => {
+      window.__mtLive = { paths, values };
+      return JSON.stringify({ results: paths.slice(0, maxResults).map(pack), total: paths.length, visited });
+    };
     if (narrow) {
-      const kept = previous.filter((p) => matches(get(p)));
-      return JSON.stringify({ results: kept.slice(0, maxResults).map(pack), total: kept.length, visited: previous.length, all: kept });
+      const prev = window.__mtLive;
+      if (!prev) return JSON.stringify({ lost: true, results: [], total: 0, visited: 0 });
+      const paths = [], values = [];
+      prev.paths.forEach((p, i) => {
+        const n = num(get(p));
+        if (n === null) return;
+        const old = prev.values[i];
+        const ok = compare === 'equal' ? hits(n) : compare === 'increased' ? n > old : compare === 'decreased' ? n < old
+          : compare === 'changed' ? n !== old : n === old;
+        if (ok) { paths.push(p); values.push(n); }
+      });
+      return finish(paths, values, prev.paths.length);
     }
+    const limit = unknown ? 300000 : 5000;
     const builtins = new Set();
     try {
       const f = document.createElement('iframe');
@@ -444,21 +477,39 @@ final class HTMLGameHost: NSObject, ObservableObject {
     const isNode = (v) => typeof Node !== 'undefined' && v instanceof Node;
     const seen = new WeakSet();
     const queue = [];
-    const found = [];
+    const paths = [], values = [];
     let head = 0, visited = 0;
+    const consider = (path, v) => { const n = num(v); if (n !== null && (unknown || hits(n))) { paths.push(path); values.push(n); } };
     const push = (holder, key, path, depth) => {
       let d;
       try { d = Object.getOwnPropertyDescriptor(holder, key); } catch (e) { return; }
       if (!d || d.get || d.set) return;   // never run getters: they can have side effects
       const v = d.value;
-      if (typeof v === 'number' || typeof v === 'string') { if (matches(v)) found.push(path); return; }
+      if (typeof v === 'number' || typeof v === 'string') { consider(path, v); return; }
       if (v && (typeof v === 'object' || (typeof v === 'function' && depth === 1))) queue.push([v, path, depth]);
     };
     for (const key of Object.getOwnPropertyNames(window)) {
       if (builtins.has(key) || skip.has(key) || key.startsWith('__mt') || key.startsWith('webkit')) continue;
       push(window, key, [key], 1);
     }
-    while (head < queue.length && visited < 300000 && found.length < 5000) {
+    // Top-level let/const/class names, read from the page's classic scripts.
+    // shortcut: misses `let a = 1, b = 2` (only `a`) and destructuring, and module scripts can't be reached at all.
+    const declared = new Set();
+    const declRe = /(?:^|[^.\\w$])(?:let|const|var|class)\\s+([A-Za-z_$][\\w$]*)/g;
+    const collect = (text) => { if (text.length > 30e6) return; let m; while ((m = declRe.exec(text)) && declared.size < 20000) declared.add(m[1]); };
+    for (const s of Array.from(document.scripts)) {
+      if (s.type === 'module') continue;
+      if (s.src) { try { const r = await fetch(s.src); if (r.ok) collect(await r.text()); } catch (e) {} }
+      else collect(s.textContent || '');
+    }
+    for (const name of declared) {
+      if (name in window || builtins.has(name) || skip.has(name)) continue;
+      let v;
+      try { v = (0, eval)(name); } catch (e) { continue; }   // function-scoped names throw here: not global
+      if (typeof v === 'number' || typeof v === 'string') consider([name], v);
+      else if (v && (typeof v === 'object' || typeof v === 'function')) queue.push([v, [name], 1]);
+    }
+    while (head < queue.length && visited < 300000 && paths.length < limit) {
       const [v, path, depth] = queue[head++];
       visited++;
       if (seen.has(v)) continue;
@@ -472,35 +523,28 @@ final class HTMLGameHost: NSObject, ObservableObject {
         push(v, k, path.concat(k), depth + 1);
       }
     }
-    return JSON.stringify({ results: found.slice(0, maxResults).map(pack), total: found.length, visited, all: found });
+    return finish(paths, values, visited);
     """
 
-    private static let liveSetScript = """
-    let o = window;
-    for (let i = 0; i < path.length - 1; i++) o = o[path[i]];
-    const last = path[path.length - 1];
-    o[last] = isString ? String(value) : Number(value);
-    return String(o[last]);
+    private static let liveSetScript = liveResolver + """
+    put(path, isString ? String(value) : Number(value));
+    return String(get(path));
     """
 
-    private static let liveFreezeScript = """
+    private static let liveFreezeScript = liveResolver + """
     window.__mtFrozen = window.__mtFrozen || {};
     if (on) { window.__mtFrozen[id] = { path, value: isString ? String(value) : Number(value) }; }
     else { delete window.__mtFrozen[id]; }
     if (!window.__mtFreezeTimer) {
       window.__mtFreezeTimer = setInterval(() => {
-        for (const k in window.__mtFrozen) {
-          const f = window.__mtFrozen[k];
-          try { let o = window; for (let i = 0; i < f.path.length - 1; i++) o = o[f.path[i]]; o[f.path[f.path.length - 1]] = f.value; } catch (e) {}
-        }
+        for (const k in window.__mtFrozen) { const f = window.__mtFrozen[k]; try { put(f.path, f.value); } catch (e) {} }
       }, 100);
     }
     return Object.keys(window.__mtFrozen).length;
     """
 
-    private static let liveReadScript = """
-    const get = (path) => { let o = window; for (const k of path) { if (o === null || o === undefined) return undefined; try { o = o[k]; } catch (e) { return undefined; } } return o; };
-    return JSON.stringify(paths.map((p) => { const v = get(p); return { path: p, value: typeof v === 'string' ? v : String(v), isString: typeof v === 'string' }; }));
+    private static let liveReadScript = liveResolver + """
+    return JSON.stringify(paths.map(pack));
     """
 
     private struct LiveRow: Decodable {
@@ -513,7 +557,8 @@ final class HTMLGameHost: NSObject, ObservableObject {
         let results: [LiveRow]
         let total: Int
         let visited: Int
-        let all: [[String]]?
+        /// The page reloaded since the last search, so its matches are gone.
+        let lost: Bool?
     }
 
     /// A JavaScript expression for a variable, e.g. `Game.cookies` or `Game.Objects["Cursor"].amount`.
@@ -546,16 +591,19 @@ final class HTMLGameHost: NSObject, ObservableObject {
         return "\(expression(value.path)) = \(literal);"
     }
 
-    func liveScan(_ query: String, close: Bool, narrow: Bool) {
-        guard let target = Double(query.trimmed) else {
+    /// `unknown` starts from every number in the game; `compare` narrows the earlier matches.
+    func liveScan(_ query: String, close: Bool, unknown: Bool = false, narrow: Bool, compare: LiveCompare = .equal) {
+        let needsValue = narrow ? compare == .equal : !unknown
+        let target = Double(query.trimmed)
+        if needsValue && target == nil {
             liveStatus = "Type the number you see in the game."
             return
         }
         guard source != nil else { return }
         liveScanning = true
         liveStatus = narrow ? "Checking the \(liveCount) earlier matches…" : "Searching the game's variables…"
-        let arguments: [String: Any] = ["target": target, "close": close, "narrow": narrow,
-                                        "previous": narrow ? livePaths : [[String]](), "maxResults": 300]
+        let arguments: [String: Any] = ["mode": unknown ? "unknown" : "exact", "target": target ?? 0, "close": close,
+                                        "narrow": narrow, "compare": compare.rawValue, "maxResults": 300]
         webView.callAsyncJavaScript(Self.liveScanScript, arguments: arguments, in: nil, in: .page) { [weak self] result in
             guard let self = self else { return }
             self.liveScanning = false
@@ -564,20 +612,29 @@ final class HTMLGameHost: NSObject, ObservableObject {
                 self.liveStatus = "Couldn't search this page. Wait for the game to finish loading and try again."
                 return
             }
-            self.livePaths = scan.all ?? []
             self.liveCount = scan.total
             self.liveResults = scan.results.map { LiveValue(path: $0.path, value: $0.value, isString: $0.isString) }
+            if scan.lost == true {
+                self.liveStatus = "The game restarted, so the earlier matches are gone. Start a New Search."
+                return
+            }
+            let next = unknown || compare != .equal
+                ? " Change it in the game (take damage, spend some…), then say how it changed."
+                : " Change the number in the game, type the new one and press Narrow Down."
             switch scan.total {
-            case 0: self.liveStatus = narrow ? "None of the earlier matches has that value now. Start a New Search." : "Nothing found. Try “Close to”, or the exact number from a stats screen."
+            case 0: self.liveStatus = narrow ? "None of the earlier matches fits. Start a New Search." : "Nothing found. Try “Close to”, or the exact number from a stats screen."
             case 1: self.liveStatus = "Found it – 1 match."
             default:
-                self.liveStatus = "\(scan.total) matches" + (narrow ? "." : " (checked \(scan.visited) values).")
-                    + " Change the number in the game, type the new one and press Narrow Down."
+                self.liveStatus = "\(scan.total) matches" + (narrow ? "." : " (checked \(scan.visited) values).") + next
             }
         }
     }
 
     func liveSet(_ value: LiveValue, to text: String) {
+        guard value.isString || Double(text.trimmed) != nil else {
+            status = "Type a number for \(value.label)."
+            return
+        }
         let arguments: [String: Any] = ["path": value.path, "value": value.isString ? text : (Double(text.trimmed) ?? 0), "isString": value.isString]
         webView.callAsyncJavaScript(Self.liveSetScript, arguments: arguments, in: nil, in: .page) { [weak self] result in
             guard let self = self else { return }
@@ -681,6 +738,7 @@ struct HTMLGameEditorView: View {
     @State private var panel = Panel.live
     @State private var liveQuery = ""
     @State private var liveClose = false
+    @State private var liveUnknown = false
     @State private var liveSelected: LiveValue?
     @State private var liveNew = ""
 
@@ -815,32 +873,58 @@ struct HTMLGameEditorView: View {
 
     private var liveView: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Change a number in a running single-player game – cookies, coins, lives, score. Type the number the game shows right now:")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                TextField("e.g. 1500", text: $liveQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { host.liveScan(liveQuery, close: liveClose, narrow: false) }
-                Toggle("Close to", isOn: $liveClose)
-                    .help("Also match numbers within 1% – for games that show rounded numbers like “1.2 million”")
+            Picker("", selection: $liveUnknown) {
+                Text("Exact value").tag(false)
+                Text("Unknown value").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            if liveUnknown {
+                Text("For values the game doesn't show as a number, like a health bar. Press New Search, change the value in the game, then say how it changed. Repeat until one or two are left.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Change a number in a running single-player game – cookies, coins, lives, score. Type the number the game shows right now:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    TextField("e.g. 1500", text: $liveQuery)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { host.liveScan(liveQuery, close: liveClose, narrow: false) }
+                    Toggle("Close to", isOn: $liveClose)
+                        .help("Also match numbers within 1% – for games that show rounded numbers like “1.2 million”")
+                }
             }
             HStack {
                 Button("New Search") {
                     liveSelected = nil
-                    host.liveScan(liveQuery, close: liveClose, narrow: false)
+                    host.liveScan(liveQuery, close: liveClose, unknown: liveUnknown, narrow: false)
                 }
                 .buttonStyle(.borderedProminent)
-                Button("Narrow Down") { host.liveScan(liveQuery, close: liveClose, narrow: true) }
-                    .disabled(host.liveCount == 0)
-                    .help("Keep only the earlier matches that now have this value")
+                .disabled(!liveUnknown && Double(liveQuery.trimmed) == nil)
+                if !liveUnknown {
+                    Button("Narrow Down") { host.liveScan(liveQuery, close: liveClose, narrow: true) }
+                        .disabled(host.liveCount == 0 || Double(liveQuery.trimmed) == nil)
+                        .help("Keep only the earlier matches that now have this value")
+                }
                 if host.liveScanning { ProgressView().controlSize(.small) }
                 Spacer()
                 Button { host.liveRefresh() } label: { Image(systemName: "arrow.clockwise") }
                     .help("Show the current values")
                     .disabled(host.liveResults.isEmpty)
             }
-            .disabled(host.source == nil || Double(liveQuery.trimmed) == nil && !host.liveScanning)
+            .disabled(host.source == nil || host.liveScanning)
+            if liveUnknown {
+                HStack {
+                    ForEach([HTMLGameHost.LiveCompare.increased, .decreased, .changed, .unchanged], id: \.self) { compare in
+                        Button(compare.rawValue.capitalized) {
+                            host.liveScan(liveQuery, close: liveClose, narrow: true, compare: compare)
+                        }
+                    }
+                }
+                .controlSize(.small)
+                .disabled(host.source == nil || host.liveScanning || host.liveCount == 0)
+            }
             if !host.liveStatus.isEmpty {
                 Text(host.liveStatus).font(.caption).foregroundStyle(.secondary)
             }
@@ -894,7 +978,7 @@ struct HTMLGameEditorView: View {
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
             }
-            Text("Tip: lots of matches? Change the number in the game (earn or spend some), type the new number and press Narrow Down. Repeat until one or two are left. The game saves your change itself.")
+            Text("Tip: lots of matches? Change the number in the game (earn or spend some), type the new number and press Narrow Down. Repeat until one or two are left. Finds variables on window and top-level let/const ones in the game's scripts. The game saves your change itself.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

@@ -17,7 +17,7 @@ enum ToolCategory: String, CaseIterable, Identifiable, Hashable {
 
 enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // General
-    case home, themes, settings, updates
+    case home, themes, settings, updates, credits
     // Automation
     case macroRecorder, autoClicker, autoTyper, keyPresser, textExpander, keepAwake, scheduler, shellRunner, launcher, keyboardLock
     // Productivity
@@ -41,7 +41,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
 
     var category: ToolCategory {
         switch self {
-        case .home, .themes, .settings, .updates: return .general
+        case .home, .themes, .settings, .updates, .credits: return .general
         case .christmas, .htmlGames: return .fun
         case .httpClient, .gitHelper, .portMonitor, .devEnvironment, .homebrew, .sshKeys, .jwtDecoder, .urlParser, .csvJson, .cronHelper, .markdownPreview, .snippets, .gitignoreGen, .hexViewer, .chromeExtensionViewer, .chromeInspector, .godotInspector, .encryption, .keyCodeViewer, .devCleaner, .localStorage:
             return .developer
@@ -70,6 +70,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .htmlGames: return "HTML Game Editor"
         case .settings: return "Permissions & Hotkeys"
         case .updates: return "Updates"
+        case .credits: return "Credits"
         case .httpClient: return "HTTP / API Client"
         case .gitHelper: return "Git Helper"
         case .portMonitor: return "Ports & Web Server"
@@ -146,6 +147,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .htmlGames: return "gamecontroller"
         case .settings: return "lock.shield"
         case .updates: return "arrow.down.circle"
+        case .credits: return "person.2"
         case .httpClient: return "paperplane"
         case .gitHelper: return "arrow.triangle.branch"
         case .portMonitor: return "dot.radiowaves.left.and.right"
@@ -222,6 +224,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .htmlGames: return "Play downloaded or online HTML games and edit their saves, storage and values like gold."
         case .settings: return "Grant permissions, customise global hotkeys and app options."
         case .updates: return "Update MacTools automatically from GitHub – no rebuilding by hand."
+        case .credits: return "The people who make and test MacTools."
         case .httpClient: return "Send API requests (GET, POST…) with headers and JSON bodies, like Postman."
         case .gitHelper: return "See status, commit, pull, push, switch branches for any repository."
         case .portMonitor: return "See what's listening on which port, stop it, or serve a folder locally."
@@ -298,6 +301,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .htmlGames: return AnyView(HTMLGameEditorView())
         case .settings: return AnyView(SettingsToolView())
         case .updates: return AnyView(UpdatesView())
+        case .credits: return AnyView(CreditsView())
         case .httpClient: return AnyView(HTTPClientView())
         case .gitHelper: return AnyView(GitHelperView())
         case .portMonitor: return AnyView(PortMonitorView())
