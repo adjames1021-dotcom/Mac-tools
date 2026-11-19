@@ -199,6 +199,8 @@ final class CDPConnection: NSObject {
     private var nextId = 1
     private var pending: [Int: (Result<[String: Any], Error>) -> Void] = [:]
     private var alive = true
+    /// Whether any message ever arrived; a socket that drops before that was refused.
+    private(set) var receivedAny = false
 
     /// Called for every event message (method + params), on the main thread.
     var onEvent: ((String, [String: Any]) -> Void)?
@@ -284,6 +286,7 @@ final class CDPConnection: NSObject {
     }
 
     private func dispatch(_ text: String) {
+        receivedAny = true
         guard let data = text.data(using: .utf8),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
         if let id = object["id"] as? Int {
@@ -326,12 +329,29 @@ struct DebugBrowser: Identifiable, Hashable {
         !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
     }
 
+    /// The browser's own user-data folder (holds Local State and the profile folders).
+    var dataURL: URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        return support.appendingPathComponent(supportPath)
+    }
+
+    /// The names people gave their profiles ("Work", "School"…), keyed by folder, from Local State.
+    func profileNames() -> [String: String] {
+        guard let data = try? Data(contentsOf: dataURL.appendingPathComponent("Local State")),
+              let state = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let cache = (state["profile"] as? [String: Any])?["info_cache"] as? [String: Any] else { return [:] }
+        var names: [String: String] = [:]
+        for (folder, info) in cache {
+            if let name = (info as? [String: Any])?["name"] as? String, !name.isEmpty { names[folder] = name }
+        }
+        return names
+    }
+
     /// Profile folders (Default, Profile 1…) found on disk for this browser.
     func profiles() -> [String] {
         let fm = FileManager.default
-        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        let base = support.appendingPathComponent(supportPath)
+        let base = dataURL
         var found: [String] = []
         let entries = (try? fm.contentsOfDirectory(at: base, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
         for entry in entries {
@@ -367,20 +387,56 @@ enum CDPLauncher {
         }.resume()
     }
 
+    /// Asks the debug port for a new blank tab.
+    static func openTab(port: Int, url: String = "about:blank") {
+        guard let endpoint = URL(string: "http://127.0.0.1:\(port)/json/new?\(url)") else { return }
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "PUT" // Chrome refuses GET here
+        request.timeoutInterval = 4
+        URLSession.shared.dataTask(with: request).resume()
+    }
+
+    /// Where the debug copy of a profile lives.
+    static func debugCopyURL(_ browser: DebugBrowser, profile: String) -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("MacTools/InspectorProfiles/\(browser.bundleID)/\(profile)")
+    }
+
+    /// Big, rebuildable folders left out of a debug copy so it stays quick to refresh.
+    static let copyExclusions = ["Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache",
+                                 "GrShaderCache", "ShaderCache", "Service Worker", "IndexedDB", "Singleton*"]
+
+    /// Refreshes the debug copy of `profile` from the real one (bookmarks, cookies, logins, extensions).
+    /// Chrome's cookie/password key lives in the Keychain, not the folder, so sign-ins carry over.
+    static func syncDebugCopy(_ browser: DebugBrowser, profile: String, into copy: URL) -> String? {
+        let fm = FileManager.default
+        let source = browser.dataURL.appendingPathComponent(profile)
+        guard fm.fileExists(atPath: source.path) else { return nil } // nothing to copy: a fresh profile
+        try? fm.createDirectory(at: copy.appendingPathComponent(profile), withIntermediateDirectories: true)
+        let localState = browser.dataURL.appendingPathComponent("Local State")
+        if fm.fileExists(atPath: localState.path) {
+            try? fm.removeItem(at: copy.appendingPathComponent("Local State"))
+            try? fm.copyItem(at: localState, to: copy.appendingPathComponent("Local State"))
+        }
+        let args = ["-a", "--delete"] + copyExclusions.map { "--exclude=\($0)" }
+            + [source.path + "/", copy.appendingPathComponent(profile).path + "/"]
+        let result = Shell.runSync("/usr/bin/rsync", args)
+        return result.succeeded ? nil : "Couldn't copy the profile: \(result.combined)"
+    }
+
     /// Quits the browser (if running), then relaunches it for the chosen profile with the debug port open.
-    /// `dedicatedDataDir` uses a separate MacTools profile folder, which recent Chrome requires for
-    /// remote debugging and which keeps the user's everyday browsing untouched.
-    static func relaunch(_ browser: DebugBrowser, profile: String, port: Int, dedicatedDataDir: Bool,
+    /// `debugCopy` runs a copy of the profile in its own folder instead: Chrome 136+ only allows remote
+    /// debugging outside its default folder, and the user's normal browser keeps running untouched.
+    static func relaunch(_ browser: DebugBrowser, profile: String, port: Int, debugCopy: Bool,
                          completion: @escaping (String?) -> Void) {
         guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: browser.bundleID) else {
             completion("\(browser.name) isn't installed."); return
         }
         var arguments = ["--remote-debugging-port=\(port)", "--remote-debugging-address=127.0.0.1"]
-        if dedicatedDataDir {
-            let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-                .appendingPathComponent("MacTools/InspectorProfiles/\(browser.bundleID)")
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            arguments.append("--user-data-dir=\(dir.path)")
+        let profileFolder = profile.isEmpty ? "Default" : profile
+        let copyURL = debugCopyURL(browser, profile: profileFolder)
+        if debugCopy {
+            arguments += ["--user-data-dir=\(copyURL.path)", "--profile-directory=\(profileFolder)"]
         } else if !profile.isEmpty {
             arguments.append("--profile-directory=\(profile)")
         }
@@ -390,7 +446,7 @@ enum CDPLauncher {
             config.arguments = arguments
             // A separate profile runs as a second Chrome next to the user's; otherwise macOS just activates
             // the running Chrome and drops the debugging flags.
-            config.createsNewApplicationInstance = dedicatedDataDir
+            config.createsNewApplicationInstance = debugCopy
             NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, error in
                 DispatchQueue.main.async { completion(error?.localizedDescription) }
             }
@@ -406,7 +462,17 @@ enum CDPLauncher {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { waitForQuit(attemptsLeft: attemptsLeft - 1) }
         }
 
-        if browser.isRunning && !dedicatedDataDir {
+        if debugCopy {
+            // Don't copy over a debug copy that is open right now; just bring it up.
+            let inUse = Shell.sh("/usr/bin/pgrep -f -- \(NmapCommand.quote("--user-data-dir=" + copyURL.path))").succeeded
+            if inUse { launch(); return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let error = syncDebugCopy(browser, profile: profileFolder, into: copyURL)
+                DispatchQueue.main.async {
+                    if let error = error { completion(error) } else { launch() }
+                }
+            }
+        } else if browser.isRunning {
             // Relaunching the real profile means fully quitting first; the flags are ignored otherwise.
             Shell.appleScript("tell application id \"\(browser.bundleID)\" to quit") { _ in
                 waitForQuit(attemptsLeft: 50)
@@ -421,10 +487,12 @@ enum CDPLauncher {
 
 /// One line in the console pane: a log, an evaluated result, an error, or an echoed command.
 struct ConsoleLine: Identifiable {
-    enum Kind { case log, warning, error, input, result, info }
+    enum Kind { case log, warning, error, input, result, info, ai }
     let id = UUID()
     let kind: Kind
     let text: String
+    /// JavaScript the AI wrote, offered with a Run button.
+    var code: String? = nil
     let time = Date()
 }
 
@@ -473,7 +541,16 @@ final class InspectorSession: ObservableObject {
     @Published var profiles: [String] = []
     @Published var selectedProfile: String = ""
     @Published var port: Int = CDPLauncher.defaultPort
-    @Published var useDedicatedProfile = false
+    @Published var profileNames: [String: String] = [:]
+    /// Run a debug copy of the profile (Chrome 136+ refuses debugging on the real profile folder).
+    @Published var useDebugCopy = UserDefaults.standard.object(forKey: "inspectorUseDebugCopy") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(useDebugCopy, forKey: "inspectorUseDebugCopy") }
+    }
+
+    func profileLabel(_ folder: String) -> String {
+        guard let name = profileNames[folder], name != folder else { return folder }
+        return "\(name) (\(folder))"
+    }
     @Published var targets: [CDPTarget] = []
     @Published var connectedTarget: CDPTarget?
     @Published var status = ""
@@ -496,6 +573,23 @@ final class InspectorSession: ObservableObject {
     }
     static let consoleLimit = 1000
     @Published var evalInput = ""
+    /// Commands run so far, newest last, for ↑/↓ in the input.
+    @Published var evalHistory: [String] = []
+    /// The input asks the AI (in plain English) instead of running JavaScript.
+    @Published var consoleAIMode = false
+    @Published var consoleAIBusy = false
+
+    enum ConsoleFilter: String, CaseIterable { case all = "All", errors = "Errors", warnings = "Warnings", logs = "Logs" }
+    @Published var consoleFilter: ConsoleFilter = .all
+
+    var visibleConsole: [ConsoleLine] {
+        switch consoleFilter {
+        case .all: return console
+        case .errors: return console.filter { $0.kind == .error }
+        case .warnings: return console.filter { $0.kind == .warning }
+        case .logs: return console.filter { $0.kind == .log || $0.kind == .info }
+        }
+    }
 
     // Picker
     @Published var picking = false
@@ -570,6 +664,7 @@ final class InspectorSession: ObservableObject {
     func refreshProfiles() {
         guard let browser = selectedBrowser else { profiles = []; return }
         profiles = browser.profiles()
+        profileNames = browser.profileNames()
         if !profiles.contains(selectedProfile) { selectedProfile = profiles.first ?? "Default" }
     }
 
@@ -600,8 +695,10 @@ final class InspectorSession: ObservableObject {
     func launchAndDiscover() {
         guard let browser = selectedBrowser else { return }
         busy = true
-        status = "Launching \(browser.name)…"
-        CDPLauncher.relaunch(browser, profile: selectedProfile, port: port, dedicatedDataDir: useDedicatedProfile) { [weak self] error in
+        status = useDebugCopy
+            ? "Copying your “\(profileNames[selectedProfile] ?? selectedProfile)” profile and opening it with debugging (the first copy can take a minute)…"
+            : "Launching \(browser.name)…"
+        CDPLauncher.relaunch(browser, profile: selectedProfile, port: port, debugCopy: useDebugCopy) { [weak self] error in
             guard let self = self else { return }
             if let error = error {
                 self.busy = false
@@ -609,7 +706,7 @@ final class InspectorSession: ObservableObject {
                 return
             }
             // Give the browser a moment to open its debug port, then retry discovery a few times.
-            self.pollForTargets(attemptsLeft: 8)
+            self.pollForTargets(attemptsLeft: 20)
         }
     }
 
@@ -622,9 +719,15 @@ final class InspectorSession: ObservableObject {
                 self.status = "Ready. Pick a tab to inspect."
                 return
             }
+            // The port is up but no tab is open (only extension workers): open one to inspect.
+            if case .success = result, attemptsLeft % 4 == 0 {
+                CDPLauncher.openTab(port: self.port)
+            }
             if attemptsLeft <= 1 {
                 self.busy = false
-                self.status = "The browser started but didn't expose a debug tab. Recent Chrome needs the separate profile option."
+                self.status = self.useDebugCopy
+                    ? "The browser started but didn't open its debug port. Quit any other debug copy using port \(self.port), then try again."
+                    : "The browser started but didn't expose a debug tab. Chrome 136+ needs “Open a debug copy of the profile” turned on."
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
@@ -642,9 +745,21 @@ final class InspectorSession: ObservableObject {
         disconnect()
         let connection = CDPConnection(webSocketURL: url)
         connection.onEvent = { [weak self] method, params in self?.handleEvent(method, params) }
-        connection.onClose = { [weak self] in
+        connection.onClose = { [weak self, weak connection] in
             self?.connected = false
-            self?.status = "The connection to the tab closed (the tab or browser was closed). Reconnect to continue."
+            if connection?.receivedAny == false, let port = self?.port {
+                // Either the browser is gone, or Chrome answered 403 "Target is not inspectable"
+                // (an admin policy turning off DevTools). The debug port tells them apart.
+                CDPLauncher.fetchTargets(port: port) { result in
+                    if case .success = result {
+                        self?.status = "Chrome refused to let MacTools inspect this tab. If this profile is managed by a school or company, its admin has turned off developer tools; try another profile."
+                    } else {
+                        self?.status = "The browser isn't running with debugging any more. Launch it again below."
+                    }
+                }
+            } else {
+                self?.status = "The connection to the tab closed (the tab or browser was closed). Reconnect to continue."
+            }
         }
         connection.connect()
         self.connection = connection
@@ -834,11 +949,19 @@ final class InspectorSession: ObservableObject {
 
     // MARK: Console / evaluation
 
-    func runEval() {
-        let expression = evalInput.trimmed
+    /// Runs what's in the input: JavaScript, or a question for the AI in AI mode.
+    func submitConsoleInput() {
+        let text = evalInput.trimmed
+        guard !text.isEmpty else { return }
+        if evalHistory.last != text { evalHistory.append(text) }
+        if evalHistory.count > 200 { evalHistory.removeFirst() }
+        evalInput = ""
+        if consoleAIMode { askConsoleAI(text) } else { runEval(text) }
+    }
+
+    func runEval(_ expression: String) {
         guard !expression.isEmpty, let connection = connection else { return }
         console.append(ConsoleLine(kind: .input, text: expression))
-        evalInput = ""
         connection.send("Runtime.evaluate", [
             "expression": expression,
             "returnByValue": false,
@@ -862,6 +985,55 @@ final class InspectorSession: ObservableObject {
     }
 
     func clearConsole() { console.removeAll() }
+
+    /// Page context for the console AI: address, title, selected element and recent output.
+    private func consoleContext(lines: Int) -> String {
+        var context = "Page: \(connectedTarget?.url ?? "unknown")\nTitle: \(connectedTarget?.title ?? "")\n"
+        if !outerHTML.isEmpty { context += "\nSelected element:\n\(outerHTML.prefix(4000))\n" }
+        let recent = console.suffix(lines).map { "[\($0.kind)] \($0.text.prefix(600))" }.joined(separator: "\n")
+        if !recent.isEmpty { context += "\nRecent console:\n\(recent)\n" }
+        return context
+    }
+
+    /// Plain-English request → JavaScript for this page, shown in the console with a Run button.
+    func askConsoleAI(_ request: String) {
+        console.append(ConsoleLine(kind: .input, text: "✦ " + request))
+        let system = "You write JavaScript for the DevTools console of a page the user is inspecting in their own browser. "
+            + "Reply with one or two short sentences, then exactly one ```js code block that does what they asked. "
+            + "The code runs as a console expression (top-level await is fine) and its final value is shown, so end with the value worth seeing. "
+            + "Don't use DevTools-only helpers like $0, $$ or inspect(). If it can't be done from page JavaScript, say so and give no code."
+        runConsoleAI(system: system, user: consoleContext(lines: 20) + "\nRequest: \(request)")
+    }
+
+    /// Asks the AI why the recent errors happen and how to fix them.
+    func explainConsoleErrors() {
+        let errors = console.filter { $0.kind == .error || $0.kind == .warning }.suffix(15)
+        guard !errors.isEmpty else { console.append(ConsoleLine(kind: .info, text: "No errors or warnings to explain.")); return }
+        console.append(ConsoleLine(kind: .input, text: "✦ Explain the errors"))
+        let system = "You are a web developer reading the console of a page the user is inspecting. Explain briefly what each distinct error or warning means and the likely cause, "
+            + "and how to fix it. If some JavaScript run in the console would help investigate, include it in one ```js code block."
+        runConsoleAI(system: system, user: consoleContext(lines: 40))
+    }
+
+    private func runConsoleAI(system: String, user: String) {
+        consoleAIBusy = true
+        InspectorAI.ask(provider: aiProvider, system: system, user: user) { [weak self] result in
+            guard let self = self else { return }
+            self.consoleAIBusy = false
+            switch result {
+            case .success(let text):
+                let code = InspectorAI.firstCodeBlock(in: text)
+                // Show the explanation; the code gets its own block with a Run button.
+                var prose = text
+                if let open = text.range(of: "```"), let close = text.range(of: "```", range: open.upperBound..<text.endIndex) {
+                    prose.removeSubrange(open.lowerBound..<close.upperBound)
+                }
+                self.console.append(ConsoleLine(kind: .ai, text: prose.trimmed, code: code))
+            case .failure(let error):
+                self.console.append(ConsoleLine(kind: .error, text: "AI: " + error.localizedDescription))
+            }
+        }
+    }
 
     // MARK: Godot
 
@@ -1039,6 +1211,7 @@ final class InspectorSession: ObservableObject {
 
 enum InspectorAIError: LocalizedError {
     case noKey(AIProvider)
+    case keychainRefused(AIProvider)
     case badKey(AIProvider)
     case declined(String)
     case http(AIProvider, Int, String)
@@ -1048,6 +1221,7 @@ enum InspectorAIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noKey(let p): return "No \(p.shortName) API key is saved yet. Add one above."
+        case .keychainRefused(let p): return "MacTools couldn't read your saved \(p.shortName) key from the Keychain. If macOS asks for permission, click Always Allow, then try again."
         case .badKey(let p): return "\(p.companyName) didn't accept the API key. Use Change to enter it again."
         case .declined(let why): return "The model declined to answer" + (why.isEmpty ? "." : ": \(why)")
         case let .http(p, status, message):
@@ -1090,7 +1264,7 @@ enum InspectorAI {
     static func ask(provider: AIProvider, system: String, user: String,
                     completion: @escaping (Result<String, Error>) -> Void) {
         guard let key = SchoolPlanner.shared.apiKey(provider), !key.isEmpty else {
-            completion(.failure(InspectorAIError.noKey(provider)))
+            completion(.failure(hasKey(provider) ? InspectorAIError.keychainRefused(provider) : InspectorAIError.noKey(provider)))
             return
         }
         let chosenModel = Self.model(for: provider)
@@ -1336,7 +1510,7 @@ struct ChromeInspectorView: View {
                 }
             }
             Card(title: "Launch a browser with debugging", icon: "arrow.clockwise") {
-                Text("If no tab was found, the browser isn't running with remote debugging. Launch it below. Recent Chrome only exposes debugging on a separate profile, so turn that on if the normal relaunch finds nothing.")
+                Text("If no tab was found, the browser isn't running with remote debugging. Pick a browser and profile and launch it here.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Picker("Browser", selection: Binding(
@@ -1345,19 +1519,23 @@ struct ChromeInspectorView: View {
                         ForEach(session.browsers) { browser in Text(browser.name).tag(Optional(browser)) }
                     }
                     .frame(maxWidth: 220)
-                    if !session.useDedicatedProfile && !session.profiles.isEmpty {
+                    if !session.profiles.isEmpty {
                         Picker("Profile", selection: $session.selectedProfile) {
-                            ForEach(session.profiles, id: \.self) { Text($0).tag($0) }
+                            ForEach(session.profiles, id: \.self) { Text(session.profileLabel($0)).tag($0) }
                         }
-                        .frame(maxWidth: 180)
+                        .frame(maxWidth: 280)
                     }
                 }
-                Toggle("Use a separate MacTools profile (needed on recent Chrome; keeps your main browsing separate)", isOn: $session.useDedicatedProfile)
+                Toggle("Open a debug copy of the profile (needed on Chrome 136+)", isOn: $session.useDebugCopy)
                     .font(.caption)
+                Text(session.useDebugCopy
+                     ? "Copies the profile's bookmarks, sign-ins and extensions into a separate MacTools folder and opens it as a second Chrome, so your normal Chrome keeps running. The copy is refreshed each launch; changes made in it aren't saved back, and some sites (like Google) may ask you to sign in again."
+                     : "Quits the browser and reopens your real profile with debugging. Works on Edge, Brave and older Chrome; Chrome 136+ ignores it.")
+                    .font(.caption2).foregroundStyle(.secondary)
                 HStack {
                     Button("Launch & Connect") { session.launchAndDiscover() }
                         .buttonStyle(.borderedProminent)
-                    if (session.selectedBrowser?.isRunning ?? false) && !session.useDedicatedProfile {
+                    if (session.selectedBrowser?.isRunning ?? false) && !session.useDebugCopy {
                         Label("This quits and reopens the browser.", systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundColor(.orange)
                     }
@@ -1388,9 +1566,13 @@ struct InspectorContent: View {
             }
             HSplitView {
                 domTree.frame(minWidth: 220)
-                VStack(spacing: 6) {
-                    breadcrumb
-                    detailTabs
+                // Drag the divider to give the console more or less room.
+                VSplitView {
+                    VStack(spacing: 6) {
+                        breadcrumb
+                        detailTabs
+                    }
+                    .frame(minHeight: 160)
                     consolePane.frame(minHeight: 140)
                 }
                 .frame(minWidth: 320)
@@ -1556,38 +1738,109 @@ struct InspectorContent: View {
     // Console
     private var consolePane: some View {
         VStack(spacing: 4) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("Console").font(.caption.bold()).foregroundStyle(.secondary)
+                Picker("Show", selection: $session.consoleFilter) {
+                    ForEach(InspectorSession.ConsoleFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
                 Spacer()
+                if session.consoleAIBusy { ProgressView().controlSize(.small) }
+                Button { session.explainConsoleErrors() } label: { Label("Explain Errors", systemImage: "sparkles") }
+                    .controlSize(.small)
+                    .disabled(!canAskConsoleAI)
+                    .help("Ask the AI what the errors and warnings mean")
                 Button("Clear") { session.clearConsole() }.controlSize(.small)
             }
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 1) {
-                        ForEach(session.console) { line in
-                            Text(consolePrefix(line.kind) + line.text)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(consoleColor(line.kind))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .id(line.id)
+                        ForEach(session.visibleConsole) { line in
+                            consoleRow(line).id(line.id)
                         }
                     }
                 }
                 .onChange(of: session.console.count) { _ in
-                    if let last = session.console.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                    if let last = session.visibleConsole.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
                 }
             }
-            HStack {
-                TextField("Run JavaScript in the page…", text: $session.evalInput)
-                    .font(.system(size: 11, design: .monospaced))
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { session.runEval() }
-                Button("Run") { session.runEval() }
+            HStack(spacing: 6) {
+                Picker("Input", selection: $session.consoleAIMode) {
+                    Text("JS").tag(false)
+                    Label("Ask AI", systemImage: "sparkles").tag(true)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .help("JS runs JavaScript in the page. Ask AI turns a plain-English request into JavaScript you can run.")
+                ConsoleInputField(
+                    text: $session.evalInput,
+                    history: session.evalHistory,
+                    placeholder: session.consoleAIMode
+                        ? "Describe what to do, e.g. “list every link on the page” (Return to ask)"
+                        : "Run JavaScript in the page… (↑/↓ for history)",
+                    onSubmit: { session.submitConsoleInput() })
+                Button(session.consoleAIMode ? "Ask" : "Run") { session.submitConsoleInput() }
+                    .disabled(session.consoleAIMode && !canAskConsoleAI)
+            }
+            if session.consoleAIMode && !planner.hasKey(session.aiProvider) {
+                AIProviderBar(provider: $session.aiProvider)
             }
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
+    }
+
+    private var canAskConsoleAI: Bool { !session.consoleAIBusy && planner.hasKey(session.aiProvider) }
+
+    @ViewBuilder
+    private func consoleRow(_ line: ConsoleLine) -> some View {
+        if line.kind == .ai {
+            VStack(alignment: .leading, spacing: 4) {
+                if !line.text.isEmpty {
+                    Text(InspectorAI.markdown("✦ " + line.text))
+                        .font(.system(size: 11.5))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let code = line.code {
+                    Text(code)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(6)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
+                    HStack {
+                        Button { session.runEval(code) } label: { Label("Run in Page", systemImage: "play.fill") }
+                            .controlSize(.small)
+                        Button("Edit") { session.consoleAIMode = false; session.evalInput = code }
+                            .controlSize(.small)
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(code, forType: .string)
+                        }
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .padding(6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.purple.opacity(0.10)))
+            .padding(.vertical, 2)
+        } else {
+            Text(consolePrefix(line.kind) + line.text)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(consoleColor(line.kind))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, line.kind == .error || line.kind == .warning ? 1 : 0)
+                .background(consoleBackground(line.kind))
+        }
+    }
+
+    private func consoleBackground(_ kind: ConsoleLine.Kind) -> Color {
+        switch kind {
+        case .error: return Color.red.opacity(0.08)
+        case .warning: return Color.orange.opacity(0.08)
+        default: return .clear
+        }
     }
 
     private func consolePrefix(_ kind: ConsoleLine.Kind) -> String {
@@ -1678,6 +1931,86 @@ struct AttributesEditor: View {
                     .buttonStyle(.borderless)
             }
             .font(.system(size: 11, design: .monospaced))
+        }
+    }
+}
+
+/// Single-line console input: Return submits, ↑/↓ walk the command history like a terminal.
+struct ConsoleInputField: NSViewRepresentable {
+    @Binding var text: String
+    let history: [String]
+    let placeholder: String
+    let onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        field.bezelStyle = .roundedBezel
+        field.lineBreakMode = .byTruncatingTail
+        field.cell?.isScrollable = true
+        field.delegate = context.coordinator
+        field.setAccessibilityLabel("Console input")
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != text { field.stringValue = text }
+        field.placeholderString = placeholder
+    }
+
+    final class Coordinator: NSObject {
+        var parent: ConsoleInputField
+        /// Position while browsing history; nil when editing a fresh line.
+        var index: Int?
+        var draft = ""
+
+        init(_ parent: ConsoleInputField) { self.parent = parent }
+
+        func show(_ value: String, in textView: NSTextView) {
+            parent.text = value
+            textView.string = value
+            textView.setSelectedRange(NSRange(location: (value as NSString).length, length: 0))
+        }
+    }
+}
+
+extension ConsoleInputField.Coordinator: NSTextFieldDelegate {
+    func controlTextDidChange(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField else { return }
+        parent.text = field.stringValue
+        index = nil
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        let history = parent.history
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            parent.text = textView.string
+            index = nil
+            parent.onSubmit()
+            return true
+        case #selector(NSResponder.moveUp(_:)):
+            guard !history.isEmpty else { return true }
+            if index == nil { draft = textView.string }
+            let next = max((index ?? history.count) - 1, 0)
+            index = next
+            show(history[next], in: textView)
+            return true
+        case #selector(NSResponder.moveDown(_:)):
+            guard let current = index else { return true }
+            if current + 1 < history.count {
+                index = current + 1
+                show(history[current + 1], in: textView)
+            } else {
+                index = nil
+                show(draft, in: textView)
+            }
+            return true
+        default:
+            return false
         }
     }
 }
