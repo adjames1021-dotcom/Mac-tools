@@ -1296,13 +1296,14 @@ enum InspectorAI {
     }
 
     /// Sends a one-shot prompt and returns the model's text answer on the main thread.
-    static func ask(provider: AIProvider, system: String, user: String,
+    /// Pass `apiKey`/`model` to skip the Keychain and School To-Do settings (Management Inspector keeps its own key).
+    static func ask(provider: AIProvider, system: String, user: String, apiKey: String? = nil, model: String? = nil,
                     completion: @escaping (Result<String, Error>) -> Void) {
-        guard let key = SchoolPlanner.shared.apiKey(provider), !key.isEmpty else {
-            completion(.failure(hasKey(provider) ? InspectorAIError.keychainRefused(provider) : InspectorAIError.noKey(provider)))
+        guard let key = apiKey ?? SchoolPlanner.shared.apiKey(provider), !key.isEmpty else {
+            completion(.failure(apiKey == nil && hasKey(provider) ? InspectorAIError.keychainRefused(provider) : InspectorAIError.noKey(provider)))
             return
         }
-        let chosenModel = Self.model(for: provider)
+        let chosenModel = model ?? Self.model(for: provider)
         var request: URLRequest
         var body: [String: Any]
         switch provider {

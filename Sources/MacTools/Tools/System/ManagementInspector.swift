@@ -7,7 +7,17 @@ struct ManagementSection: Identifiable {
     let title: String
     let icon: String
     let text: String
+    var simple = false
     var id: String { title }
+}
+
+/// What the plain-English summary is built from.
+struct ManagementFacts {
+    var dep = false, mdm = false, profiles = false, adBound = false, isAdmin = true
+    var intercepted = false, extraCerts = 0
+    var vendors: [String] = []
+    var restrictions: [(key: String, value: Any)] = []
+    var chromeOrgs: [String] = [], chromeForced = 0, chromeMachinePolicy = false
 }
 
 enum ManagementInspector {
@@ -62,20 +72,112 @@ enum ManagementInspector {
     }
 
     /// Restrictions read from Managed Preferences: `allow…` keys set to false, and `disable…`/`force…` keys set to true.
-    static func restrictions(_ managed: [String: [String: Any]]) -> [String] {
-        var out: [String] = []
+    static let limitKeys: Set<String> = ["disabledpreferencepanes", "hiddenpreferencepanes", "disabledsystemsettings", "pathblacklist",
+        "pathwhitelist", "mount-controls", "urlblocklist", "urlblacklist", "extensioninstallforcelist", "enforcedsoftwareupdatedelay"]
+
+    static func restrictionItems(_ managed: [String: [String: Any]]) -> [(kind: String, key: String, domain: String, value: Any)] {
+        var out: [(kind: String, key: String, domain: String, value: Any)] = []
         for (domain, dict) in managed {
             for (key, value) in dict {
                 let k = key.lowercased()
-                if k.hasPrefix("allow"), (value as? Bool) == false { out.append("BLOCKED   \(key)  (\(domain))") }
-                if k.hasPrefix("disable") || k.hasPrefix("force"), (value as? Bool) == true { out.append("ENFORCED  \(key)  (\(domain))") }
-                if ["disabledpreferencepanes", "hiddenpreferencepanes", "disabledsystemsettings", "pathblacklist", "pathwhitelist",
-                    "mount-controls", "urlblocklist", "urlblacklist", "extensioninstallforcelist", "enforcedsoftwareupdatedelay"].contains(k) {
-                    out.append("LIMITED   \(key) = \(String(describing: value).replacingOccurrences(of: "\n", with: " ").prefix(160))  (\(domain))")
-                }
+                if k.hasPrefix("allow"), (value as? Bool) == false { out.append(("BLOCKED ", key, domain, value)) }
+                if k.hasPrefix("disable") || k.hasPrefix("force"), (value as? Bool) == true { out.append(("ENFORCED", key, domain, value)) }
+                if limitKeys.contains(k) { out.append(("LIMITED ", key, domain, value)) }
             }
         }
-        return out.sorted()
+        return out.sorted { ($0.kind, $0.key) < ($1.kind, $1.key) }
+    }
+
+    static func restrictions(_ managed: [String: [String: Any]]) -> [String] {
+        restrictionItems(managed).map { r in
+            r.kind == "LIMITED "
+                ? "\(r.kind)  \(r.key) = \(String(describing: r.value).replacingOccurrences(of: "\n", with: " ").prefix(160))  (\(r.domain))"
+                : "\(r.kind)  \(r.key)  (\(r.domain))"
+        }
+    }
+
+    /// Everyday words for the restriction keys people meet most; anything else is de-camel-cased.
+    static func friendly(_ key: String) -> String {
+        let known: [String: String] = [
+            "allowcamera": "Use the camera", "allowscreenshot": "Take screenshots or record the screen", "allowairdrop": "Use AirDrop",
+            "allowerasecontentandsettings": "Erase the Mac yourself", "allowicloudsignin": "Sign in to iCloud",
+            "allowcloudkeychainsync": "Sync passwords with iCloud Keychain", "allowpasswordsharing": "Share passwords",
+            "allowautounlock": "Unlock with your Apple Watch", "allowfingerprintforunlock": "Unlock with Touch ID",
+            "allowdictation": "Use dictation", "allowmusicservice": "Use Apple Music", "allowgamecenter": "Use Game Center",
+            "allowaccountmodification": "Add or change accounts", "allowexplicitcontent": "See explicit content",
+            "disabledpreferencepanes": "Open some System Settings pages", "hiddenpreferencepanes": "See some System Settings pages",
+            "disabledsystemsettings": "Open some System Settings pages", "mount-controls": "Use some USB drives or disks",
+            "pathblacklist": "Open some apps", "pathwhitelist": "Open apps that aren't on an approved list",
+            "urlblocklist": "Visit some websites", "urlblacklist": "Visit some websites",
+            "extensioninstallforcelist": "Remove the browser extensions they added",
+            "enforcedsoftwareupdatedelay": "Get macOS updates as soon as they come out",
+            "forcesafesearch": "Turn off SafeSearch", "forcegooglesafesearch": "Turn off Google SafeSearch",
+        ]
+        if let k = known[key.lowercased()] { return k }
+        var words = key
+        for prefix in ["allow", "disable", "force"] where words.lowercased().hasPrefix(prefix) { words = String(words.dropFirst(prefix.count)) }
+        let spaced = words.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression)
+        let verb = key.lowercased().hasPrefix("allow") ? "Use: " : "Change: "
+        return verb + spaced.prefix(1).uppercased() + spaced.dropFirst()
+    }
+
+    /// The plain-English version of the report, for someone who has never heard of MDM.
+    static func plainSummary(_ f: ManagementFacts) -> [ManagementSection] {
+        var out: [ManagementSection] = []
+        let org = f.chromeOrgs.first ?? "your school or work"
+        let otherParts = !f.vendors.isEmpty || f.profiles || !f.restrictions.isEmpty || f.intercepted || f.adBound
+
+        let short: String
+        if f.dep {
+            short = "An organisation (usually a school or employer) fully controls this Mac. It was registered to them when it was bought, so they manage it even if it's wiped and set up again."
+        } else if f.mdm {
+            short = "An organisation (usually a school or employer) controls this Mac. Someone signed it up to their management system, which lets them change settings and apps from far away."
+        } else if otherParts {
+            short = "This Mac isn't signed up to an organisation's management system, but some settings or software on it are controlled by someone else."
+        } else if !f.chromeOrgs.isEmpty {
+            short = "Nobody else controls this Mac itself. But when you use Chrome signed in with your \(org) account, \(org) sets the rules for that Chrome profile."
+        } else {
+            short = "Nobody else controls this Mac. You're in charge of it."
+        }
+        out.append(.init(title: "In short", icon: "lightbulb", text: short, simple: true))
+
+        var who: [String] = []
+        if f.dep || f.mdm { who.append("• This Mac reports to a management server run by an organisation (this is called MDM, short for mobile device management).") }
+        for v in f.vendors { who.append("• \(v) is installed. It's software organisations use to look after or watch their computers.") }
+        if f.adBound { who.append("• The Mac is joined to an organisation's network accounts (Active Directory), so it may use work or school logins.") }
+        if f.profiles { who.append("• Settings packs (called configuration profiles) have been added. They turn settings on or off and can't always be changed by you.") }
+        if !f.chromeOrgs.isEmpty { who.append("• Chrome: \(f.chromeOrgs.joined(separator: ", ")) manages the Chrome profile(s) you're signed into with that account.") }
+        if !who.isEmpty { out.append(.init(title: "Who is in charge, and how", icon: "person.2", text: who.joined(separator: "\n"), simple: true)) }
+
+        var can: [String] = []
+        if f.dep || f.mdm {
+            can.append("• Add or remove apps, change settings, and lock or erase the Mac remotely.")
+            can.append("• See basic facts about the Mac: its model, serial number, the apps installed, and storage space.")
+            can.append("• MDM on its own can't read your files, messages or photos. Other monitoring software could, if it's installed (see above).")
+        }
+        if !f.vendors.isEmpty { can.append("• Depending on how it's set up, the software listed above may see websites you visit, apps you use, or your screen.") }
+        if f.intercepted { can.append("• Your web traffic is being opened up and checked by a filter, so it can see the websites you visit and what you send to them, even on secure (https) sites.") }
+        else if f.extraCerts > 0 { can.append("• An extra security certificate is installed. Filters use these to read secure web traffic, so websites may be checked on some networks.") }
+        if !f.chromeOrgs.isEmpty {
+            can.append("• In the Chrome profile signed in as \(org): set rules, block websites, and add extensions you can't remove" + (f.chromeForced > 0 ? " (\(f.chromeForced) added so far)" : "") + ". Depending on their settings, they may also see that profile's browsing history.")
+        }
+        if f.chromeMachinePolicy { can.append("• Chrome settings are also forced for the whole Mac, so they apply to every Chrome profile, including personal ones.") }
+        if !can.isEmpty { out.append(.init(title: "What they can do", icon: "eye", text: can.joined(separator: "\n"), simple: true)) }
+
+        var cant = f.restrictions.map { "• " + friendly($0.key) }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        if !f.isAdmin { cant.insert("• Install system software or change security settings without an administrator's password. Your account is a standard (non-admin) account.", at: 0) }
+        if f.dep { cant.append("• Remove the management yourself. Only the organisation can release the Mac.") }
+        out.append(.init(title: "What you can't do", icon: "hand.raised",
+                         text: cant.isEmpty ? "Nothing is blocked. You can change settings, install apps and use every feature." : cant.joined(separator: "\n"), simple: true))
+
+        var tips: [String] = []
+        if f.dep || f.mdm || otherParts { tips.append("• Treat this Mac like a school or work computer: assume what you do on it could be seen.") }
+        if !f.chromeOrgs.isEmpty && !f.chromeMachinePolicy { tips.append("• The \(org) rules only apply in Chrome while you're signed in with that account. A separate Chrome profile with a personal account isn't run by them.") }
+        if f.dep || f.mdm { tips.append("• If the Mac is yours and should no longer be managed, ask the organisation's IT team to release it.") }
+        if tips.isEmpty { tips.append("• Nothing to worry about here.") }
+        tips.append("• Switch to Detailed for the technical information behind this summary.")
+        out.append(.init(title: "What this means for you", icon: "info.circle", text: tips.joined(separator: "\n"), simple: true))
+        return out
     }
 
     static func selfCheckChrome() {
@@ -83,6 +185,12 @@ enum ManagementInspector {
         assert(ext == ["Filter (a)", "c"], "policy extension parsing")
         let r = restrictions(["com.apple.applicationaccess": ["allowCamera": false, "allowAirDrop": true], "x": ["forceSafeSearch": true]])
         assert(r.count == 2 && r[0].hasPrefix("BLOCKED   allowCamera") && r[1].hasPrefix("ENFORCED"), "restriction parsing")
+        assert(friendly("allowCamera") == "Use the camera" && friendly("allowFooBar") == "Use: Foo Bar", "friendly names")
+        var f = ManagementFacts(); f.chromeOrgs = ["school.org"]
+        assert(plainSummary(f)[0].text.contains("school.org"), "chrome-only summary")
+        f.dep = true; f.isAdmin = false
+        let p = plainSummary(f)
+        assert(p[0].text.contains("fully controls") && p.allSatisfy(\.simple), "DEP summary")
     }
 
     private static func json(_ path: String) -> [String: Any] {
@@ -90,13 +198,15 @@ enum ManagementInspector {
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
     }
 
-    static func chromeSection() -> String {
+    static func chromeSection() -> (text: String, orgs: [String], forced: Int, machinePolicy: Bool) {
+        var orgs: [String] = [], forcedTotal = 0, machinePolicy = false
         var lines: [String] = []
         let fm = FileManager.default
         // Machine-wide policy pushed by MDM
         let policyPath = "/Library/Managed Preferences/com.google.Chrome.plist"
         if let policy = NSDictionary(contentsOfFile: policyPath) as? [String: Any] {
             lines.append("Machine policy (from MDM): \(policy.count) Chrome policies in force")
+            machinePolicy = true
             for key in policy.keys.sorted() {
                 let value = key.lowercased().contains("token") ? "(present, hidden)"
                     : String(describing: policy[key]!).replacingOccurrences(of: "\n", with: " ").prefix(200).description
@@ -129,12 +239,17 @@ enum ManagementInspector {
                 settings.merge(ext) { a, _ in a }
             }
             let forced = policyExtensions(settings)
+            if managed || (!domain.isEmpty && domain != "NO_HOSTED_DOMAIN") {
+                let name = domain.isEmpty || domain == "NO_HOSTED_DOMAIN" ? (label.isEmpty ? "An organisation" : label) : domain
+                if !orgs.contains(name) { orgs.append(name) }
+                forcedTotal = max(forcedTotal, forced.count)
+            }
             lines.append("  Extensions:    \(settings.count) total, \(forced.count) installed by policy" + (forced.isEmpty ? "" : ":"))
             lines += forced.map { "    • \($0)" }
         }
         lines.append("\nTip: open chrome://policy and chrome://management in Chrome to see every policy and where it came from.")
         lines.append("Note: Google's own Docs/Sheets/Slides/Drive apps can show as policy-installed on some Macs.")
-        return lines.joined(separator: "\n")
+        return (lines.joined(separator: "\n"), orgs, forcedTotal, machinePolicy)
     }
 
     private static func run(_ path: String, _ args: [String]) -> String {
@@ -260,7 +375,8 @@ enum ManagementInspector {
         sections.append(.init(title: "What you can and can't do", icon: "hand.raised", text: probes.joined(separator: "\n")))
 
         // 10. Chrome
-        let chrome = chromeSection()
+        let chromeInfo = chromeSection()
+        let chrome = chromeInfo.text
         sections.append(.init(title: "Chrome profiles & policies", icon: "globe", text: chrome))
 
         // Verdict: how managed this Mac is, and how it's done
@@ -285,14 +401,58 @@ enum ManagementInspector {
         }
         sections.insert(.init(title: "Verdict: \(level)", icon: "checklist",
                               text: how.isEmpty ? "Nothing on this Mac points to an organisation managing it." : how.map { "• " + $0 }.joined(separator: "\n")), at: 0)
-        return sections
+
+        var facts = ManagementFacts()
+        facts.dep = dep; facts.mdm = mdm; facts.profiles = hasProfiles; facts.adBound = !ad.isEmpty; facts.isAdmin = isAdmin
+        facts.intercepted = intercepted; facts.extraCerts = certs.count; facts.vendors = agents.keys.sorted()
+        facts.restrictions = restrictionItems(managedDicts).map { ($0.key, $0.value) }
+        facts.chromeOrgs = chromeInfo.orgs; facts.chromeForced = chromeInfo.forced; facts.chromeMachinePolicy = chromeInfo.machinePolicy
+        return plainSummary(facts) + sections
+    }
+}
+
+/// The AI summary's API keys. Kept in plain text in the app's data folder (on the stick for Lite) – this is a private app.
+struct ManagementAIKeys: Codable {
+    var provider = AIProvider.claude
+    var claudeKey = ""
+    var openAIKey = ""
+    static let file = "management-ai-keys.json"
+
+    func key(_ p: AIProvider) -> String { p == .claude ? claudeKey : openAIKey }
+    mutating func setKey(_ k: String, _ p: AIProvider) { if p == .claude { claudeKey = k } else { openAIKey = k } }
+}
+
+enum ManagementAI {
+    static let system = """
+    You summarise a macOS device-management report for a reader with basic technical knowledge (knows what an app, \
+    a setting and a network are, but not MDM terms). Be short and professional: at most 180 words, plain sentences, \
+    no filler, no greetings. Use exactly these headings, each followed by 1–3 bullet points:
+    Management level
+    Managed by and how
+    What the organisation can see or control
+    Restrictions on the user
+    Recommendation
+    Only state what the report supports; if something can't be told from the report, say so briefly. \
+    Define any acronym the first time you use it. Don't explain how to bypass or remove management; for that, \
+    the recommendation is to contact the organisation's IT team.
+    """
+
+    static func prompt(_ sections: [ManagementSection]) -> String {
+        let text = sections.filter { !$0.simple }.map { "## \($0.title)\n\($0.text)" }.joined(separator: "\n\n")
+        // shortcut: long profile dumps are cut at 60k characters, which still covers every section header.
+        return "Management report:\n\n" + String(text.prefix(60_000))
     }
 }
 
 struct ManagementInspectorView: View {
+    enum Mode: String, CaseIterable { case simple = "Simple", ai = "AI Summary", detailed = "Detailed" }
     @State private var sections: [ManagementSection] = []
     @State private var loading = false
     @State private var status = ""
+    @State private var mode = Mode.simple
+    @State private var keys = DataStore.load(ManagementAIKeys.self, from: ManagementAIKeys.file) ?? ManagementAIKeys()
+    @State private var aiText = ""
+    @State private var aiBusy = false
 
     private var report: String {
         "MacTools management report – \(Host.current().localizedName ?? "") – \(Date())\n\n"
@@ -310,14 +470,70 @@ struct ManagementInspectorView: View {
             }
             Text("Read-only. Uses only checks a standard user can run, so no password is needed. It shows the management in place; it doesn't change or remove it.")
                 .font(.caption).foregroundStyle(.secondary)
+            Picker("View", selection: $mode) {
+                ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented).frame(width: 330).labelsHidden()
             if !status.isEmpty { Text(status).font(.caption).foregroundColor(.accentColor) }
-            ForEach(sections) { section in
+            if mode == .ai { aiCard }
+            ForEach(sections.filter { mode == .simple ? $0.simple : mode == .detailed && !$0.simple }) { section in
                 Card(title: section.title, icon: section.icon) {
-                    OutputBox(text: section.text, minHeight: 40, maxHeight: 320)
+                    if mode == .simple {
+                        Text(section.text).font(.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        OutputBox(text: section.text, minHeight: 40, maxHeight: 320)
+                    }
                 }
             }
         }
         .onAppear { if sections.isEmpty { reload() } }
+    }
+
+    private var aiCard: some View {
+        Card(title: "AI Summary", icon: "sparkles") {
+            HStack(spacing: 8) {
+                Picker("", selection: $keys.provider) {
+                    ForEach(AIProvider.allCases) { Text($0.shortName).tag($0) }
+                }
+                .labelsHidden().pickerStyle(.segmented).frame(width: 170)
+                TextField("\(keys.provider.shortName) API key (\(keys.provider.keyPlaceholder))",
+                          text: Binding(get: { keys.key(keys.provider) }, set: { keys.setKey($0.trimmed, keys.provider) }))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.callout, design: .monospaced))
+                Button("Save Key") {
+                    DataStore.save(keys, to: ManagementAIKeys.file)
+                    status = "Key saved in plain text to \(DataStore.url(ManagementAIKeys.file).path)"
+                }
+                Link("Get a key", destination: keys.provider.keyPage).font(.caption)
+            }
+            HStack {
+                Button(aiBusy ? "Summarising…" : "Summarise with \(keys.provider.shortName)") { summarise() }
+                    .disabled(aiBusy || sections.isEmpty || keys.key(keys.provider).isEmpty)
+                if aiBusy { ProgressView().controlSize(.small) }
+                Spacer()
+                if !aiText.isEmpty { Button("Copy") { ClipboardHelper.copy(aiText) } }
+            }
+            Text("Sends the detailed report (it includes this Mac's name, account names and Chrome sign-in emails) to \(keys.provider.companyName). The key is stored unencrypted.")
+                .font(.caption2).foregroundStyle(.secondary)
+            if !aiText.isEmpty {
+                Text(InspectorAI.markdown(aiText)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func summarise() {
+        DataStore.save(keys, to: ManagementAIKeys.file)
+        aiBusy = true
+        aiText = ""
+        let p = keys.provider
+        InspectorAI.ask(provider: p, system: ManagementAI.system, user: ManagementAI.prompt(sections),
+                        apiKey: keys.key(p), model: p == .claude ? SchoolModels.claudeDefault : SchoolModels.openAIDefault) { result in
+            aiBusy = false
+            switch result {
+            case .success(let text): aiText = text
+            case .failure(let error): aiText = "⚠️ " + error.localizedDescription
+            }
+        }
     }
 
     private func reload() {
