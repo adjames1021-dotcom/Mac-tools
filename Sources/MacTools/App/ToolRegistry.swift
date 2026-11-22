@@ -31,7 +31,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
     // Files & media
     case pdfEditor, batchRenamer, imageTools, mp3ToFlac, diskUsage, duplicateFinder, saveInspector
     // System
-    case systemInfo, processManager, appUninstaller, startupItems, systemToggles
+    case systemInfo, processManager, appUninstaller, startupItems, systemToggles, managementInspector
     // Network
     case networkTools, nmap, proxyClient
     // Calculators
@@ -41,7 +41,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
 
     #if LITE
     /// MacTools Lite: the diagnostic core only.
-    static let visible: [ToolID] = [.home, .systemInfo, .processManager, .startupItems, .appUninstaller,
+    static let visible: [ToolID] = [.home, .systemInfo, .managementInspector, .processManager, .startupItems, .appUninstaller,
                                     .diskUsage, .duplicateFinder, .networkTools, .nmap, .portMonitor,
                                     .hashTool, .shellRunner, .textTools]
     #else
@@ -62,7 +62,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
             return .text
         case .pdfEditor, .batchRenamer, .imageTools, .mp3ToFlac, .diskUsage, .duplicateFinder, .saveInspector:
             return .files
-        case .systemInfo, .processManager, .appUninstaller, .startupItems, .systemToggles:
+        case .systemInfo, .processManager, .appUninstaller, .startupItems, .systemToggles, .managementInspector:
             return .system
         case .networkTools, .nmap, .proxyClient:
             return .network
@@ -140,6 +140,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .systemInfo: return "System Info"
         case .processManager: return "App & Process Manager"
         case .systemToggles: return "System Toggles"
+        case .managementInspector: return "Management Inspector"
         case .networkTools: return "Network Tools"
         case .nmap: return "Nmap Scanner"
         case .proxyClient: return "VPN / Proxy Client"
@@ -219,6 +220,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .systemInfo: return "info.circle"
         case .processManager: return "list.bullet.rectangle"
         case .systemToggles: return "switch.2"
+        case .managementInspector: return "building.columns"
         case .networkTools: return "network"
         case .nmap: return "network.badge.shield.half.filled"
         case .proxyClient: return "lock.shield"
@@ -298,6 +300,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .systemInfo: return "Hardware, memory, disk, battery and OS details."
         case .processManager: return "See running apps and processes, quit or force quit them."
         case .systemToggles: return "Hidden files, dark mode, Dock, Finder tweaks and quick actions."
+        case .managementInspector: return "See whether this Mac is managed, by whom, and every profile, restriction, filter and agent in force – no admin needed."
         case .networkTools: return "IP info, ping, DNS, port check, traceroute, speed test…"
         case .nmap: return "Scan hosts and networks with nmap, with every option explained in plain English."
         case .proxyClient: return "Hiddify-style client: import a subscription or vless/vmess/trojan/ss/hysteria2/tuic links and connect through sing-box."
@@ -377,6 +380,7 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
         case .systemInfo: return AnyView(SystemInfoView())
         case .processManager: return AnyView(ProcessManagerView())
         case .systemToggles: return AnyView(SystemTogglesView())
+        case .managementInspector: return AnyView(ManagementInspectorView())
         case .networkTools: return AnyView(NetworkToolsView())
         case .nmap: return AnyView(NmapToolView())
         case .proxyClient: return AnyView(ProxyClientView())

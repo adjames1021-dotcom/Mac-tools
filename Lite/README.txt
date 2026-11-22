@@ -9,7 +9,7 @@ ON A MAC
   right-click (or Control-click) MacToolsLite.app > Open > Open. You only do this once per Mac.
   Still blocked? Open Terminal and run:  xattr -dr com.apple.quarantine /Volumes/<stick>/MacToolsLite.app
 
-  Tools: System Info (with "Save Diagnostic Report"), App & Process Manager, Startup Items,
+  Tools: System Info (with "Save Diagnostic Report"), Management Inspector, App & Process Manager, Startup Items,
   App Uninstaller, Disk Usage, Duplicate Finder, Network Tools, Nmap Scanner*, Ports,
   Hash & Checksum, Command Runner, Text Tools.   (*needs nmap installed on that Mac)
 
@@ -24,3 +24,7 @@ ON WINDOWS (10 / 11)
   If SmartScreen warns you: More info > Run anyway.
 
 Both report tools only read information; they don't change settings or delete anything.
+
+ALSO ON THE STICK
+  Tools/Windows Apps: Recuva (file recovery installer), TestDisk + PhotoRec (partition/photo recovery), portable VLC.
+  Music (FLAC and MP3 copies), HTML Games, and the AJUSB Vault page.

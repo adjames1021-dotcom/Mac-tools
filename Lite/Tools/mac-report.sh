@@ -83,17 +83,20 @@ run() { local t="$1"; shift; perl -e 'alarm shift; exec @ARGV' "$t" "$@" 2>&1 ||
   # Read-only: lists the management policies in force, not a way around them.
   echo "MDM enrollment: $(profiles status -type enrollment 2>/dev/null | paste -sd '; ' -)"
   echo
-  echo "Configuration profiles installed:"
-  run 20 profiles show 2>/dev/null | grep -E 'attribute: name|ProfileIdentifier' | sed 's/^ */  /' || echo "  (none, or needs admin)"
+  echo "Configuration profiles and payloads (readable without admin):"
+  P="$(run 30 system_profiler SPConfigurationProfileDataType)"
+  echo "${P:-  (none installed)}"
   echo
-  echo "Restrictions payloads in force:"
-  run 20 profiles show 2>/dev/null | grep -iE 'Restrictions|allowErase|allowCamera|allowScreenShot|forceList|blacklisted|whitelisted' | sed 's/^ *//' | sort -u || echo "  (none visible)"
+  echo "Enforced settings (/Library/Managed Preferences):"
+  M="$(find "/Library/Managed Preferences" -name '*.plist' 2>/dev/null)"
+  if [[ -z "$M" ]]; then echo "  (none)"; else while IFS= read -r f; do echo "-- $f"; plutil -p "$f" 2>&1; done <<< "$M"; fi
   echo
-  echo "Parental / content & privacy controls:"
-  echo "  Screen Time / content filter: $(defaults read com.apple.applicationaccess 2>/dev/null | tr -d '\n' | cut -c1-200 || echo 'not set for this user')"
-  echo
-  echo "Gatekeeper / SIP / FileVault (repeated here for the admin): SIP=$(csrutil status 2>&1 | sed 's/.*: //'); Gatekeeper=$(spctl --status 2>&1); FileVault=$(fdesetup status 2>&1 | head -1)"
-  echo "Login restrictions: $(defaults read /Library/Preferences/com.apple.loginwindow 2>/dev/null | grep -E 'HiddenUsersList|DisableConsoleAccess|RestartDisabled|SHOWFULLNAME' | tr -d '\n' | cut -c1-200 || echo 'default')"
+  echo "Directory binding: $(dsconfigad -show 2>/dev/null | head -3 | paste -sd ';' - | grep . || echo 'not bound')"
+  A="$(defaults read com.apple.applicationaccess 2>/dev/null | tr -d '\n' | cut -c1-200)"
+  echo "Screen Time / content filter: ${A:-not set for this user}"
+  L="$(defaults read /Library/Preferences/com.apple.loginwindow 2>/dev/null | grep -E 'HiddenUsersList|DisableConsoleAccess|RestartDisabled|SHOWFULLNAME' | tr -d '\n' | cut -c1-200)"
+  echo "Login restrictions: ${L:-default}"
+  echo "Extra System keychain certificates: $(security find-certificate -a /Library/Keychains/System.keychain 2>/dev/null | awk -F'=' '/"labl"/{print $2}' | grep -v '"com.apple\|"Apple ' | paste -sd ',' - | grep . || echo none)"
   echo
   echo "Notes for IT: this lists the active management profiles and restrictions so they can be reviewed; it is not a bypass."
 
