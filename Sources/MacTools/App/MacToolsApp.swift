@@ -66,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TaskScheduler.shared.start()
         WindowManager.shared.startTracking()
         UpdateManager.shared.start()
+        LiteUSBUpdater.shared.start()
         ThemeManager.shared.start()
         SchoolPlanner.shared.start()
         #endif

@@ -616,6 +616,10 @@ struct UpdatesView: View {
                     .foregroundStyle(.secondary)
             }
 
+            #if !LITE
+            LiteUSBCard()
+            #endif
+
             if !updater.newCommits.isEmpty {
                 Card(title: updater.latestVersion.map { "What's New in \($0)" } ?? "What's New (\(updater.newCommits.count))", icon: "sparkles") {
                     ForEach(updater.newCommits.prefix(40)) { commit in

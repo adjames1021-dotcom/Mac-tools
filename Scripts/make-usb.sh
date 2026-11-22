@@ -25,5 +25,8 @@ cp Lite/Tools/mac-report.sh Lite/Tools/WinTools.ps1 "$TARGET/Tools/"
 cp "Lite/Windows Tools.bat" Lite/README.txt "$TARGET/"
 chmod +x "$TARGET/Tools/mac-report.sh"
 
+# cp leaves ._ AppleDouble files on FAT/exFAT sticks; merge them away.
+dot_clean -m "$TARGET" 2>/dev/null || true
+
 codesign --verify --deep "$TARGET/MacToolsLite.app" || echo "⚠️  The copied app's signature didn't verify – rebuild with ./build.sh --lite --force"
 echo "✅ MacTools Lite is ready in $TARGET ($(du -sh "$TARGET/MacToolsLite.app" "$TARGET/Tools" | awk '{print $1}' | paste -sd+ -) used)"
