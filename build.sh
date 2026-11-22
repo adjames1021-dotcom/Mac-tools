@@ -6,6 +6,7 @@
 #   ./build.sh --install     also copy the app to /Applications (or ~/Applications)
 #   ./build.sh --dest PATH   copy the finished app to PATH (used by the in-app updater)
 #   ./build.sh --no-quit     don't quit a running copy of MacTools (used by the in-app updater)
+#   ./build.sh --lite        build MacToolsLite.app instead: diagnostic tools only, universal, portable
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -22,24 +23,35 @@ FORCE=0
 INSTALL=0
 NO_QUIT=0
 DEST=""
+LITE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -f|--force) FORCE=1 ;;
     -i|--install) INSTALL=1 ;;
     --no-quit) NO_QUIT=1 ;;
+    --lite) LITE=1 ;;
     --dest)
       shift
       DEST="${1:-}"
       [[ -n "$DEST" ]] || { echo "--dest needs a path"; exit 1; }
       ;;
     -h|--help)
-      sed -n '2,9p' build.sh
+      sed -n '2,10p' build.sh
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
   shift
 done
+
+if [[ $LITE -eq 1 ]]; then
+  # MacTools Lite runs from a USB stick, so it is never installed.
+  [[ $INSTALL -eq 0 ]] || { echo "--lite can't be combined with --install (use Scripts/make-usb.sh)"; exit 1; }
+  APP_NAME="MacToolsLite"
+  BUNDLE_ID="com.mactools.lite"
+  APP="$BUILD_DIR/$APP_NAME.app"
+  STAMP="$BUILD_DIR/.build-hash-lite"
+fi
 
 quit_running_app() {
   [[ $NO_QUIT -eq 1 ]] && return 0
@@ -144,10 +156,10 @@ if [[ ${#SOURCES[@]} -eq 0 ]]; then
   exit 1
 fi
 
-HASH="$( { cat "${SOURCES[@]}" Resources/Info.plist Scripts/make_icon.swift build.sh; cat VERSION 2>/dev/null || true; uname -m; "$SWIFTC" --version 2>&1; } | shasum -a 256 | cut -d' ' -f1)"
+HASH="$( { cat "${SOURCES[@]}" Resources/Info.plist Scripts/make_icon.swift build.sh Lite/Tools/mac-report.sh; cat VERSION 2>/dev/null || true; uname -m; echo "lite=$LITE"; "$SWIFTC" --version 2>&1; } | shasum -a 256 | cut -d' ' -f1)"
 
 if [[ $FORCE -eq 0 && -x "$APP/Contents/MacOS/$APP_NAME" && -f "$STAMP" && "$(cat "$STAMP")" == "$HASH" ]]; then
-  echo "✅ MacTools is up to date."
+  echo "✅ $APP_NAME is up to date."
   if [[ -n "$DEST" ]]; then copy_app_to "$DEST"; fi
   if [[ $INSTALL -eq 1 ]]; then install_app; fi
   exit 0
@@ -173,11 +185,24 @@ fi
 ARCH="$(uname -m)"
 mkdir -p "$BUILD_DIR"
 TMP_BIN="$BUILD_DIR/$APP_NAME.bin"
+if [[ $LITE -eq 1 ]]; then
+  # Universal (Apple silicon + Intel) so the stick works on any Mac; LITE hides the other tools and services.
+  echo "🔨 Building MacTools Lite $VERSION for arm64 + x86_64 (${#SOURCES[@]} files). This takes a few minutes…"
+  for arch in arm64 x86_64; do
+    "$SWIFTC" -O -swift-version 5 -parse-as-library -D LITE \
+      -sdk "$SDK" -target "$arch-apple-macos$MIN_MACOS" \
+      -module-name MacTools \
+      -o "$TMP_BIN.$arch" "${SOURCES[@]}"
+  done
+  lipo -create -output "$TMP_BIN" "$TMP_BIN.arm64" "$TMP_BIN.x86_64"
+  rm -f "$TMP_BIN.arm64" "$TMP_BIN.x86_64"
+else
 echo "🔨 Building MacTools $VERSION for $ARCH (${#SOURCES[@]} files). This takes a minute or two…"
 "$SWIFTC" -O -swift-version 5 -parse-as-library \
   -sdk "$SDK" -target "$ARCH-apple-macos$MIN_MACOS" \
   -module-name "$APP_NAME" \
   -o "$TMP_BIN" "${SOURCES[@]}"
+fi
 
 # 4. Assemble the .app bundle -------------------------------------------------------------
 quit_running_app
@@ -197,6 +222,13 @@ plutil -replace MTBranch -string "$BRANCH" "$PLIST"
 plutil -replace MTBuildDate -string "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PLIST"
 plutil -replace MTVersion -string "$VERSION" "$PLIST"
 plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
+if [[ $LITE -eq 1 ]]; then
+  for key in CFBundleExecutable CFBundleName; do plutil -replace $key -string "$APP_NAME" "$PLIST"; done
+  plutil -replace CFBundleDisplayName -string "MacTools Lite" "$PLIST"
+  plutil -replace CFBundleIdentifier -string "$BUNDLE_ID" "$PLIST"
+  plutil -replace MTSourceDir -string "" "$PLIST"  # don't carry this Mac's folder path onto the stick
+  cp Lite/Tools/mac-report.sh "$APP/Contents/Resources/"
+fi
 
 # App icon (optional – the build still succeeds if this step fails)
 make_icon() {

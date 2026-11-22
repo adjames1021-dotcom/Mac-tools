@@ -7,6 +7,21 @@ struct MacToolsApp: App {
     @StateObject private var appState = AppState.shared
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
+    #if LITE
+    init() { Portable.loadDefaults() }
+
+    // Lite: one window, no menu bar icon or automation menu, nothing left running on someone else's Mac.
+    var body: some Scene {
+        WindowGroup("MacTools Lite", id: "main") {
+            ContentView()
+                .environmentObject(appState)
+                .themedRoot()
+                .background(WindowChromeFix())
+                .frame(minWidth: 1080, minHeight: 680)
+        }
+        .commands { CommandGroup(replacing: .newItem) { } }
+    }
+    #else
     var body: some Scene {
         WindowGroup("MacTools", id: "main") {
             ContentView()
@@ -36,10 +51,14 @@ struct MacToolsApp: App {
             MenuBarLabel()
         }
     }
+    #endif
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if LITE
+        ThemeManager.shared.start()  // Lite starts no background services, for a fast launch
+        #else
         _ = Permissions.shared
         HotKeyCenter.shared.registerAll()
         ClipboardManager.shared.start()
@@ -49,17 +68,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UpdateManager.shared.start()
         ThemeManager.shared.start()
         SchoolPlanner.shared.start()
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        #if LITE
+        true
+        #else
         // Keep running in the menu bar so hotkeys, clipboard history and schedules keep working.
         false
+        #endif
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         Automation.stopAll()
         KeyboardLock.shared.unlock()
+        #if LITE
+        Portable.saveDefaults()
+        #else
         ProxyClient.shared.disconnect()  // sing-box turns the system proxy back off as it exits
+        #endif
     }
 }
 
@@ -75,7 +103,7 @@ final class AppState: ObservableObject {
 
     private init() {
         let raw = UserDefaults.standard.string(forKey: "selectedTool") ?? ""
-        selection = ToolID(rawValue: raw) ?? .home
+        selection = ToolID(rawValue: raw).flatMap { ToolID.visible.contains($0) ? $0 : nil } ?? .home
     }
 
     /// Brings the main window to the front (opening one if needed).

@@ -5,6 +5,9 @@ import UniformTypeIdentifiers
 /// JSON files stored in ~/Library/Application Support/MacTools
 enum DataStore {
     static var directory: URL {
+        #if LITE
+        if let dir = Portable.dataDirectory { return dir }
+        #endif
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         let dir = base.appendingPathComponent("MacTools", isDirectory: true)
@@ -30,6 +33,43 @@ enum DataStore {
         }
     }
 }
+
+#if LITE
+/// MacTools Lite runs off a USB stick: data, settings and reports live next to the app, not in ~/Library.
+enum Portable {
+    /// The folder that holds MacToolsLite.app (the stick's root in the USB layout).
+    static let base = Bundle.main.bundleURL.deletingLastPathComponent()
+
+    /// nil when the folder isn't writable (e.g. a locked stick); callers fall back to ~/Library.
+    static let dataDirectory: URL? = writableDir("MacToolsLite Data")
+    static var reportsDirectory: URL? { writableDir("Reports") }
+
+    private static func writableDir(_ name: String) -> URL? {
+        let dir = base.appendingPathComponent(name, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return FileManager.default.isWritableFile(atPath: dir.path) ? dir : nil
+    }
+
+    private static var defaultsFile: URL? { dataDirectory?.appendingPathComponent("settings.plist") }
+    private static var domain: String { Bundle.main.bundleIdentifier ?? "com.mactools.lite" }
+
+    /// Loads the stick's settings into UserDefaults (call before anything reads defaults).
+    static func loadDefaults() {
+        guard let file = defaultsFile,
+              let dict = NSDictionary(contentsOf: file) as? [String: Any] else { return }
+        UserDefaults.standard.setPersistentDomain(dict, forName: domain)
+    }
+
+    /// Saves settings back to the stick and removes them from this Mac, leaving no trace behind.
+    static func saveDefaults() {
+        let dict = UserDefaults.standard.persistentDomain(forName: domain) ?? [:]
+        guard let file = defaultsFile else { return }
+        if (dict as NSDictionary).write(to: file, atomically: true) {
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+        }
+    }
+}
+#endif
 
 /// Small Codable settings structs stored in UserDefaults.
 enum Prefs {

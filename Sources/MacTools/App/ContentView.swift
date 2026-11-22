@@ -7,7 +7,7 @@ struct ContentView: View {
 
     private var sections: [(category: ToolCategory, tools: [ToolID])] {
         ToolCategory.allCases.compactMap { (category: ToolCategory) -> (category: ToolCategory, tools: [ToolID])? in
-            let tools = ToolID.allCases.filter { $0.category == category && matches($0) }
+            let tools = ToolID.visible.filter { $0.category == category && matches($0) }
             if tools.isEmpty { return nil }
             return (category: category, tools: tools)
         }
@@ -54,18 +54,21 @@ struct ContentView: View {
 
 struct HomeView: View {
     @EnvironmentObject private var appState: AppState
+    #if !LITE
     @ObservedObject private var permissions = Permissions.shared
+    #endif
     @ObservedObject private var christmas = ChristmasManager.shared
 
     private let columns = [GridItem(.adaptive(minimum: 210), spacing: 12)]
 
     var body: some View {
         ToolPage(tool: .home) {
+            #if !LITE
             if !permissions.accessibility || !permissions.inputMonitoring {
                 PermissionBanner(needs: [.accessibility, .inputMonitoring])
             }
             HStack(spacing: 12) {
-                QuickStat(title: "Tools", value: "\(ToolID.allCases.filter { $0.category != .general }.count)", icon: "wrench.and.screwdriver")
+                QuickStat(title: "Tools", value: "\(ToolID.visible.filter { $0.category != .general }.count)", icon: "wrench.and.screwdriver")
                 QuickStat(title: "Stop everything", value: HotKeyCenter.shared.displayString(for: .stopAll), icon: "stop.circle")
                 QuickStat(title: "Record macro", value: HotKeyCenter.shared.displayString(for: .toggleMacroRecording), icon: "record.circle")
                 QuickStat(title: "Auto clicker", value: HotKeyCenter.shared.displayString(for: .toggleAutoClicker), icon: "cursorarrow.click.2")
@@ -75,11 +78,12 @@ struct HomeView: View {
                               value: days == 0 ? "🎄" : "\(days) day\(days == 1 ? "" : "s")", icon: "gift")
                 }
             }
-            ForEach(ToolCategory.allCases.filter { $0 != .general }) { category in
+            #endif
+            ForEach(ToolCategory.allCases.filter { c in c != .general && ToolID.visible.contains { $0.category == c } }) { category in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(category.rawValue).font(.title3.bold())
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
-                        ForEach(ToolID.allCases.filter { $0.category == category }) { tool in
+                        ForEach(ToolID.visible.filter { $0.category == category }) { tool in
                             ToolCard(tool: tool) { appState.selection = tool }
                         }
                     }

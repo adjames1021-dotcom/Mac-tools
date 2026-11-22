@@ -73,6 +73,9 @@ struct SystemInfoView: View {
     @State private var gpu = ""
     @State private var disk: (total: Int64, free: Int64) = (0, 0)
     private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    #if LITE
+    @State private var reportStatus = ""
+    #endif
 
     private var rows: [(String, String)] {
         let info = ProcessInfo.processInfo
@@ -133,6 +136,11 @@ struct SystemInfoView: View {
                 Button("Copy All") {
                     ClipboardHelper.copy(rows.map { "\($0.0): \($0.1)" }.joined(separator: "\n"))
                 }
+                #if LITE
+                Button(reportStatus == "Working…" ? "Saving Report…" : "Save Diagnostic Report") { saveReport() }
+                    .disabled(reportStatus == "Working…")
+                Text(reportStatus).font(.caption).foregroundStyle(.secondary)
+                #endif
             }
         }
         .onAppear(perform: loadSlow)
@@ -153,6 +161,31 @@ struct SystemInfoView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.045)))
     }
+
+    #if LITE
+    /// Runs the bundled mac-report.sh and saves the report in the stick's Reports folder.
+    private func saveReport() {
+        guard let script = Bundle.main.url(forResource: "mac-report", withExtension: "sh") else {
+            reportStatus = "mac-report.sh is missing from the app"; return
+        }
+        let dir = Portable.reportsDirectory
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+        reportStatus = "Working…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Shell.runSync("/bin/bash", [script.path, dir.path])
+            // The script's last line is the report's path.
+            let path = result.output.trimmed.components(separatedBy: "\n").last ?? ""
+            DispatchQueue.main.async {
+                if result.succeeded, FileManager.default.fileExists(atPath: path) {
+                    reportStatus = "Saved to \(path)"
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                } else {
+                    reportStatus = "Report failed: \(result.combined.prefix(200))"
+                }
+            }
+        }
+    }
+    #endif
 
     private func loadSlow() {
         if let values = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey]) {

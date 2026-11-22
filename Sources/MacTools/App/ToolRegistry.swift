@@ -39,6 +39,15 @@ enum ToolID: String, CaseIterable, Identifiable, Hashable {
 
     var id: String { rawValue }
 
+    #if LITE
+    /// MacTools Lite: the diagnostic core only.
+    static let visible: [ToolID] = [.home, .systemInfo, .processManager, .startupItems, .appUninstaller,
+                                    .diskUsage, .duplicateFinder, .networkTools, .nmap, .portMonitor,
+                                    .hashTool, .shellRunner, .textTools]
+    #else
+    static let visible = allCases
+    #endif
+
     var category: ToolCategory {
         switch self {
         case .home, .themes, .settings, .updates, .credits: return .general

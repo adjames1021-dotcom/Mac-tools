@@ -190,11 +190,37 @@ Macros, snippets, notes, schedules, launcher profiles and clipboard history are 
 
 School To-Do keeps its list in `school-todo.json`, your check-offs in `school-todo-checked.json`, and your edits, hidden items and added items in `school-todo-changes.json` in that folder. Its API keys and the optional Infinite Campus login are in your login keychain, and the school sites' sign-in cookies are in MacTools' website data (**School To-Do ▸ Setup ▸ Sign Out of All School Sites** clears them).
 
+## MacTools Lite (USB diagnostics stick)
+
+MacTools Lite is a cut-down edition for checking out other people's computers from a USB stick. It has only the diagnostic tools (System Info, App & Process Manager, Startup Items, App Uninstaller, Disk Usage, Duplicate Finder, Network Tools, Nmap, Ports, Hash & Checksum, Command Runner, Text Tools). It starts no background services: no menu bar icon, hotkeys, clipboard history, scheduler or updater. It quits when you close its window, and it runs on both Apple silicon and Intel Macs.
+
+Make a stick (any format works: exFAT is best if you also use it on Windows):
+
+```bash
+Scripts/make-usb.sh /Volumes/MYSTICK
+```
+
+That builds `MacToolsLite.app` (`./build.sh --lite`) and copies this layout to the stick, which takes up about 30 MB of a 10 GB budget:
+
+```
+MacToolsLite.app      Mac: double-click (right-click ▸ Open the first time on a new Mac)
+Windows Tools.bat     Windows: double-click (Run as administrator for disk health)
+README.txt            how to use the stick
+Tools/mac-report.sh   Mac diagnostic report, also run by System Info ▸ Save Diagnostic Report
+Tools/WinTools.ps1    Windows menu and report: hardware, SMART, battery, startup, network, event log, security
+Reports/              every report is saved here
+MacToolsLite Data/    the Lite app's settings (created on first run)
+```
+
+The Lite app keeps its data and settings on the stick, not in `~/Library`. When it quits, it moves its settings back to the stick and removes them from the Mac. It is signed with your local certificate, which other Macs don't trust. Because it isn't downloaded, it carries no quarantine flag, so it usually opens straight away. If Gatekeeper still blocks it, right-click ▸ **Open**. The Windows side uses only the PowerShell built into Windows 10/11, so there's nothing to install.
+
 ## Project layout
 
 ```
 Launch MacTools.command   double-click launcher (builds, opens the app, closes Terminal)
-build.sh                  compiles Sources/ into build.noindex/MacTools.app with swiftc
+build.sh                  compiles Sources/ into build.noindex/MacTools.app with swiftc (--lite: MacToolsLite.app)
+Lite/                     what goes on the MacTools Lite USB stick besides the app
+Scripts/make-usb.sh       builds MacTools Lite and lays it out on a USB stick
 update.conf               which GitHub repository/branch the in-app updater follows
 VERSION                   the version number (2.2, 2.3 …) shown in the app
 Resources/Info.plist      app bundle metadata
