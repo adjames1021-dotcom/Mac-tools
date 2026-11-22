@@ -150,6 +150,60 @@ function Get-Security {
         Format-Table -AutoSize | Out-String
 }
 
+function Get-Lockdown {
+    # Reports which management policies and restrictions are in force, so an admin can
+    # review them. Read-only: it lists the lockdown, it does not change or defeat it.
+    Section 'Management & lockdown'
+    'Managed by:'
+    "  Domain joined:   $((Get-CimInstance Win32_ComputerSystem).PartOfDomain)"
+    "  Azure AD / MDM:  $((dsregcmd /status | Select-String 'AzureAdJoined|MDMUrl|EnterpriseJoined' | ForEach-Object { $_.ToString().Trim() }) -join '; ')"
+    'Active Group Policies (gpresult):'
+    (gpresult /r /scope:computer 2>$null | Select-String 'Applied Group Policy Objects' -Context 0,12 | Out-String).Trim()
+
+    'User restrictions in effect:'
+    $restrict = @{
+        'Task Manager disabled'       = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System::DisableTaskMgr'
+        'Registry editor disabled'    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System::DisableRegistryTools'
+        'Command prompt disabled'     = 'HKCU:\Software\Policies\Microsoft\Windows\System::DisableCMD'
+        'Control Panel hidden'        = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer::NoControlPanel'
+        'Run menu removed'            = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer::NoRun'
+        'Folder Options hidden'       = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer::NoFolderOptions'
+        'No network drive mapping'    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer::NoNetConnectDisconnect'
+        'Drives hidden in Explorer'   = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer::NoDrives'
+    }
+    foreach ($name in $restrict.Keys | Sort-Object) {
+        $path, $prop = $restrict[$name] -split '::'
+        $val = (Get-ItemProperty -Path $path -Name $prop -ErrorAction SilentlyContinue).$prop
+        '  {0,-28} {1}' -f $name, $(if ($val) { "ON (=$val)" } else { 'off' })
+    }
+
+    'USB storage policy:'
+    $usb = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR' -Name Start -ErrorAction SilentlyContinue).Start
+    "  USB mass storage: $(switch ($usb) { 3 {'allowed'} 4 {'BLOCKED'} default {'default/allowed'} })"
+    $wpdDeny = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices\{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}' -Name Deny_All -ErrorAction SilentlyContinue).Deny_All
+    "  Removable disks:  $(if ($wpdDeny -eq 1) { 'write-blocked by policy' } else { 'no deny-all policy' })"
+
+    'Application allow-listing:'
+    $applocker = Get-AppLockerPolicy -Effective -ErrorAction SilentlyContinue
+    if ($applocker -and $applocker.RuleCollections.Count) {
+        $applocker.RuleCollections | ForEach-Object { "  AppLocker {0}: {1} rules, mode {2}" -f $_.RuleCollectionType, $_.Count, $_.EnforcementMode }
+    } else { '  AppLocker: no effective rules' }
+    $srp = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Safer\CodeIdentifiers' -Name DefaultLevel -ErrorAction SilentlyContinue).DefaultLevel
+    "  Software Restriction Policies: $(if ($null -ne $srp) { "active (default level $srp)" } else { 'none' })"
+
+    'Windows Defender / SmartScreen policy:'
+    $mp = Get-MpPreference -ErrorAction SilentlyContinue
+    if ($mp) { "  Tamper Protection: $((Get-MpComputerStatus).IsTamperProtected);  Real-time disabled by policy: $($mp.DisableRealtimeMonitoring)" }
+
+    'Review notes for the administrator (settings that look weak or inconsistent):'
+    $notes = @()
+    if ($usb -eq 4 -and $wpdDeny -ne 1) { $notes += 'USBSTOR is disabled but the removable-disk write policy is not set; already-installed USB classes may still mount.' }
+    if ((Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System' -Name DisableTaskMgr -ErrorAction SilentlyContinue).DisableTaskMgr -and -not $applocker) { $notes += 'Task Manager is locked but no app allow-listing is enforced.' }
+    if (-not (Get-CimInstance Win32_ComputerSystem).PartOfDomain -and -not ($applocker)) { $notes += 'Not domain-joined and no AppLocker: restrictions are local-only and easier to misconfigure.' }
+    if ($notes) { $notes | ForEach-Object { "  - $_" } } else { '  (nothing obviously inconsistent)' }
+    'Hand this section to IT; it lists the policies in force, not a way around them.'
+}
+
 $Checks = [ordered]@{
     '1' = @('System & hardware info', { Get-SystemInfo })
     '2' = @('Disk health', { Get-DiskHealth })
@@ -159,6 +213,7 @@ $Checks = [ordered]@{
     '6' = @('Network test', { Get-NetworkInfo })
     '7' = @('Recent errors (event log)', { Get-RecentErrors })
     '8' = @('Security status', { Get-Security })
+    '9' = @('Management & lockdown audit', { Get-Lockdown })
 }
 
 function Save-FullReport {
