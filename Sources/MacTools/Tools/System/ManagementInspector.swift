@@ -411,48 +411,12 @@ enum ManagementInspector {
     }
 }
 
-/// The AI summary's API keys. Kept in plain text in the app's data folder (on the stick for Lite) – this is a private app.
-struct ManagementAIKeys: Codable {
-    var provider = AIProvider.claude
-    var claudeKey = ""
-    var openAIKey = ""
-    static let file = "management-ai-keys.json"
-
-    func key(_ p: AIProvider) -> String { p == .claude ? claudeKey : openAIKey }
-    mutating func setKey(_ k: String, _ p: AIProvider) { if p == .claude { claudeKey = k } else { openAIKey = k } }
-}
-
-enum ManagementAI {
-    static let system = """
-    You summarise a macOS device-management report for a reader with basic technical knowledge (knows what an app, \
-    a setting and a network are, but not MDM terms). Be short and professional: at most 180 words, plain sentences, \
-    no filler, no greetings. Use exactly these headings, each followed by 1–3 bullet points:
-    Management level
-    Managed by and how
-    What the organisation can see or control
-    Restrictions on the user
-    Recommendation
-    Only state what the report supports; if something can't be told from the report, say so briefly. \
-    Define any acronym the first time you use it. Don't explain how to bypass or remove management; for that, \
-    the recommendation is to contact the organisation's IT team.
-    """
-
-    static func prompt(_ sections: [ManagementSection]) -> String {
-        let text = sections.filter { !$0.simple }.map { "## \($0.title)\n\($0.text)" }.joined(separator: "\n\n")
-        // shortcut: long profile dumps are cut at 60k characters, which still covers every section header.
-        return "Management report:\n\n" + String(text.prefix(60_000))
-    }
-}
-
 struct ManagementInspectorView: View {
-    enum Mode: String, CaseIterable { case simple = "Simple", ai = "AI Summary", detailed = "Detailed" }
+    enum Mode: String, CaseIterable { case simple = "Simple", detailed = "Detailed" }
     @State private var sections: [ManagementSection] = []
     @State private var loading = false
     @State private var status = ""
     @State private var mode = Mode.simple
-    @State private var keys = DataStore.load(ManagementAIKeys.self, from: ManagementAIKeys.file) ?? ManagementAIKeys()
-    @State private var aiText = ""
-    @State private var aiBusy = false
 
     private var report: String {
         "MacTools management report – \(Host.current().localizedName ?? "") – \(Date())\n\n"
@@ -473,10 +437,9 @@ struct ManagementInspectorView: View {
             Picker("View", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
-            .pickerStyle(.segmented).frame(width: 330).labelsHidden()
+            .pickerStyle(.segmented).frame(width: 220).labelsHidden()
             if !status.isEmpty { Text(status).font(.caption).foregroundColor(.accentColor) }
-            if mode == .ai { aiCard }
-            ForEach(sections.filter { mode == .simple ? $0.simple : mode == .detailed && !$0.simple }) { section in
+            ForEach(sections.filter { mode == .simple ? $0.simple : !$0.simple }) { section in
                 Card(title: section.title, icon: section.icon) {
                     if mode == .simple {
                         Text(section.text).font(.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -487,53 +450,6 @@ struct ManagementInspectorView: View {
             }
         }
         .onAppear { if sections.isEmpty { reload() } }
-    }
-
-    private var aiCard: some View {
-        Card(title: "AI Summary", icon: "sparkles") {
-            HStack(spacing: 8) {
-                Picker("", selection: $keys.provider) {
-                    ForEach(AIProvider.allCases) { Text($0.shortName).tag($0) }
-                }
-                .labelsHidden().pickerStyle(.segmented).frame(width: 170)
-                TextField("\(keys.provider.shortName) API key (\(keys.provider.keyPlaceholder))",
-                          text: Binding(get: { keys.key(keys.provider) }, set: { keys.setKey($0.trimmed, keys.provider) }))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.callout, design: .monospaced))
-                Button("Save Key") {
-                    DataStore.save(keys, to: ManagementAIKeys.file)
-                    status = "Key saved in plain text to \(DataStore.url(ManagementAIKeys.file).path)"
-                }
-                Link("Get a key", destination: keys.provider.keyPage).font(.caption)
-            }
-            HStack {
-                Button(aiBusy ? "Summarising…" : "Summarise with \(keys.provider.shortName)") { summarise() }
-                    .disabled(aiBusy || sections.isEmpty || keys.key(keys.provider).isEmpty)
-                if aiBusy { ProgressView().controlSize(.small) }
-                Spacer()
-                if !aiText.isEmpty { Button("Copy") { ClipboardHelper.copy(aiText) } }
-            }
-            Text("Sends the detailed report (it includes this Mac's name, account names and Chrome sign-in emails) to \(keys.provider.companyName). The key is stored unencrypted.")
-                .font(.caption2).foregroundStyle(.secondary)
-            if !aiText.isEmpty {
-                Text(InspectorAI.markdown(aiText)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private func summarise() {
-        DataStore.save(keys, to: ManagementAIKeys.file)
-        aiBusy = true
-        aiText = ""
-        let p = keys.provider
-        InspectorAI.ask(provider: p, system: ManagementAI.system, user: ManagementAI.prompt(sections),
-                        apiKey: keys.key(p), model: p == .claude ? SchoolModels.claudeDefault : SchoolModels.openAIDefault) { result in
-            aiBusy = false
-            switch result {
-            case .success(let text): aiText = text
-            case .failure(let error): aiText = "⚠️ " + error.localizedDescription
-            }
-        }
     }
 
     private func reload() {

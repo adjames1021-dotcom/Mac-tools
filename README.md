@@ -178,7 +178,6 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **Management Inspector**: find out whether this Mac is managed (for example by a school or company), by whom, and what's in force. No admin password is needed. It only reads, so it never changes or removes anything.
   - **Simple** view (the default) explains it in plain English: who is in charge and how, what they can see or control, what you can't do, and what it means for you.
   - **Detailed** view gives a verdict (Level 1 partly managed, Level 2 MDM managed, Level 3 fully managed & supervised). It lists MDM enrollment (Apple School / Business Manager), monitoring, filtering and security agents, configuration profiles, enforced settings, system and kernel extensions, proxy/VPN/DNS control, certificates added to the System keychain, security and account settings, and Chrome profiles and policies.
-  - **AI Summary** sends the detailed report to Claude or ChatGPT for a short, professional summary. The report includes this Mac's name, account names and Chrome sign-in emails, and the API key is stored unencrypted in the app's data folder.
   - Copy or save the report.
 - **App & Process Manager**: switch to, hide, quit or force quit apps; list processes by CPU or memory and end them.
 - **System Toggles**: Dark Mode, hidden files, file extensions, desktop icons, Dock auto-hide and delay, Wi-Fi, mute, volume and more. Quick actions include lock, sleep, restart Finder/Dock, empty Trash, eject disks, flush DNS, free memory, log out, restart and shut down.
