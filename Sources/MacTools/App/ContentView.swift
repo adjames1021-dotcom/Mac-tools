@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var updater = UpdateManager.shared
+    @ObservedObject private var newTags = NewToolTags.shared
     @State private var search = ""
 
     private var sections: [(category: ToolCategory, tools: [ToolID])] {
@@ -25,9 +26,16 @@ struct ContentView: View {
                 ForEach(sections, id: \.category) { section in
                     Section(section.category.rawValue) {
                         ForEach(section.tools) { tool in
-                            Label(tool.title, systemImage: tool.icon)
-                                .badge(tool == .updates && (updater.updateAvailable || updater.phase == .ready) ? Text("New") : nil)
-                                .tag(tool)
+                            Label {
+                                HStack(spacing: 6) {
+                                    Text(tool.title)
+                                    if newTags.isNew(tool) { NewTag() }
+                                }
+                            } icon: {
+                                Image(systemName: tool.icon)
+                            }
+                            .badge(tool == .updates && (updater.updateAvailable || updater.phase == .ready) ? Text("New") : nil)
+                            .tag(tool)
                         }
                     }
                 }
@@ -58,6 +66,7 @@ struct HomeView: View {
     @ObservedObject private var permissions = Permissions.shared
     #endif
     @ObservedObject private var christmas = ChristmasManager.shared
+    @ObservedObject private var newTags = NewToolTags.shared
 
     private let columns = [GridItem(.adaptive(minimum: 210), spacing: 12)]
 
@@ -84,7 +93,7 @@ struct HomeView: View {
                     Text(category.rawValue).font(.title3.bold())
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                         ForEach(ToolID.visible.filter { $0.category == category }) { tool in
-                            ToolCard(tool: tool) { appState.selection = tool }
+                            ToolCard(tool: tool, isNew: newTags.isNew(tool)) { appState.selection = tool }
                         }
                     }
                 }
@@ -116,6 +125,7 @@ private struct QuickStat: View {
 
 private struct ToolCard: View {
     let tool: ToolID
+    let isNew: Bool
     let action: () -> Void
     @State private var hovering = false
 
@@ -135,6 +145,7 @@ private struct ToolCard: View {
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
+                if isNew { NewTag() }
             }
             .padding(10)
             .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)

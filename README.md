@@ -1,8 +1,10 @@
 # 🧰 MacTools
 
-One native macOS app with 60 tools: a keyboard & mouse **macro recorder/player**, an **auto clicker that can also press keys**, an **auto typer**, a **PDF editor**, key presser, text expander, window snapping, clipboard history and lots more. It's written in Swift/SwiftUI, has no dependencies, and is built on your own Mac from this source code.
+One native macOS app with 70 tools: a keyboard & mouse **macro recorder/player**, an **auto clicker that can also press keys**, an **auto typer**, a **PDF editor**, key presser, text expander, window snapping, clipboard history and lots more. It's written in Swift/SwiftUI, has no dependencies, and is built on your own Mac from this source code.
 
 **Themes**: pick a color theme for all of MacTools – Classic, Ocean, Forest, Sunset, Grape, Candy, Midnight, Graphite, Frost or Cocoa – and Auto, Light or Dark mode.
+
+**NEW tags**: tools added in the last two updates show a **NEW** tag in the sidebar and on Home until you open them for the first time. Tools added in later updates get the tag automatically.
 
 ## Getting started
 
@@ -160,6 +162,7 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
   - Save, or export a password-protected copy, a flattened PDF with annotations baked in, PNG images of each page, or plain text. Unlock password-protected PDFs.
 - **Batch Renamer**: find/replace (with regex), prefix, suffix, case, numbering and extension changes, with a live preview, clash detection and undo.
 - **Image Converter**: convert between JPEG, PNG, HEIC, TIFF, GIF, BMP and PDF; resize, rotate, flip; combine images into a PDF.
+- **MP3 to FLAC**: add MP3s or whole folders (or drop them on the page) and convert them to lossless 24-bit FLAC with macOS's built-in `afconvert`. The title, artist, album, track and disc numbers, year, genre, lyrics, cover art and every other tag (custom ones too) are copied across. FLACs are saved next to each MP3 or in a folder you choose, and existing files are never overwritten. FLAC can't bring back what MP3 compression removed; it keeps the MP3's sound exactly, without losing any more.
 - **Disk Usage**: volume overview, the biggest folders and files, and Move to Trash.
 - **Duplicate Finder**: finds identical files by content (SHA-256) and shows how much space you'd save.
 - **Save Editor**: break down a game save or any data file and find and change values like money, coins, lives or score.
@@ -172,6 +175,11 @@ MacTools also has a **menu bar icon** (🔧) for quick start/stop, and it keeps 
 - **System Info**: CPU, memory, disk, battery, uptime, load and thermal state.
 - **App Uninstaller**: pick an app and see **everything** it keeps on your Mac – caches, preferences, sandbox containers, saved state, logs, crash reports, cookies, web data, launch agents and helper tools – with sizes. Uninstall the app and the data you've ticked, or **reset** an app by deleting only its data. A **Leftovers** scan finds data from apps you've already deleted. Everything goes to the Trash (so it can be restored), the app is quit first, and system-wide files ask for your password.
 - **Startup Items**: see the background helpers (launch agents and daemons) that start with your Mac, stop them, or remove them.
+- **Management Inspector**: find out whether this Mac is managed (for example by a school or company), by whom, and what's in force. No admin password is needed. It only reads, so it never changes or removes anything.
+  - **Simple** view (the default) explains it in plain English: who is in charge and how, what they can see or control, what you can't do, and what it means for you.
+  - **Detailed** view gives a verdict (Level 1 partly managed, Level 2 MDM managed, Level 3 fully managed & supervised). It lists MDM enrollment (Apple School / Business Manager), monitoring, filtering and security agents, configuration profiles, enforced settings, system and kernel extensions, proxy/VPN/DNS control, certificates added to the System keychain, security and account settings, and Chrome profiles and policies.
+  - **AI Summary** sends the detailed report to Claude or ChatGPT for a short, professional summary. The report includes this Mac's name, account names and Chrome sign-in emails, and the API key is stored unencrypted in the app's data folder.
+  - Copy or save the report.
 - **App & Process Manager**: switch to, hide, quit or force quit apps; list processes by CPU or memory and end them.
 - **System Toggles**: Dark Mode, hidden files, file extensions, desktop icons, Dock auto-hide and delay, Wi-Fi, mute, volume and more. Quick actions include lock, sleep, restart Finder/Dock, empty Trash, eject disks, flush DNS, free memory, log out, restart and shut down.
 - **Network Tools**: public and local IPs, ping, traceroute, DNS lookup, port check, whois, HTTP headers, a speed test, interfaces, connections, routes and LAN devices.
@@ -192,7 +200,7 @@ School To-Do keeps its list in `school-todo.json`, your check-offs in `school-to
 
 ## MacTools Lite (USB diagnostics stick)
 
-MacTools Lite is a cut-down edition for checking out other people's computers from a USB stick. It has only the diagnostic tools (System Info, App & Process Manager, Startup Items, App Uninstaller, Disk Usage, Duplicate Finder, Network Tools, Nmap, Ports, Hash & Checksum, Command Runner, Text Tools). It starts no background services: no menu bar icon, hotkeys, clipboard history, scheduler or updater. It quits when you close its window, and it runs on both Apple silicon and Intel Macs.
+MacTools Lite is a cut-down edition for checking out other people's computers from a USB stick. It has only the diagnostic tools (System Info, Management Inspector, App & Process Manager, Startup Items, App Uninstaller, Disk Usage, Duplicate Finder, Network Tools, Nmap, Ports, Hash & Checksum, Command Runner, Text Tools). It starts no background services: no menu bar icon, hotkeys, clipboard history, scheduler or updater. It quits when you close its window, and it runs on both Apple silicon and Intel Macs.
 
 Make a stick (any format works: exFAT is best if you also use it on Windows):
 

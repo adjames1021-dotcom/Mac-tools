@@ -98,13 +98,18 @@ final class AppState: ObservableObject {
 
     @Published var selection: ToolID? {
         didSet {
-            if let s = selection { UserDefaults.standard.set(s.rawValue, forKey: "selectedTool") }
+            if let s = selection {
+                UserDefaults.standard.set(s.rawValue, forKey: "selectedTool")
+                NewToolTags.shared.markSeen(s)
+            }
         }
     }
 
     private init() {
         let raw = UserDefaults.standard.string(forKey: "selectedTool") ?? ""
         selection = ToolID(rawValue: raw).flatMap { ToolID.visible.contains($0) ? $0 : nil } ?? .home
+        // The tool reopened at launch counts as opened. Done right after launch, not while the window is being built.
+        if let s = selection { DispatchQueue.main.async { NewToolTags.shared.markSeen(s) } }
     }
 
     /// Brings the main window to the front (opening one if needed).
